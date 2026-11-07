@@ -92,6 +92,8 @@ pub(crate) struct Shared {
     current: Mutex<Option<PathBuf>>,
     volume: AtomicU32,
     /// Frames the decoder should skip to satisfy a seek.
+    /// Requested seek in **device** frames. The decoder converts it to source
+    /// frames before seeking.
     seek_request: AtomicU64,
     /// Set while the decoder is filling after a seek/underrun.
     buffering: AtomicBool,
@@ -237,14 +239,20 @@ fn spawn_control(shared: Arc<Shared>, receiver: Receiver<Command>) {
                         shared.ring.lock().unwrap().clear();
                     }
                     Command::Seek(to) => {
+                        // The transport's position is measured in *device*
+                        // frames, so it must be converted before it can be handed
+                        // to a decoder working in source frames. Using the source
+                        // rate here would land a seek a factor of four off.
+                        let output_rate = shared.output_rate.load(Ordering::Relaxed);
+                        let source_rate = shared.source_rate.load(Ordering::Relaxed).max(1);
                         let frames = {
                             let mut guard = shared.transport.lock().unwrap();
                             match guard.as_mut() {
                                 Some(t) => {
                                     t.seek(to);
-                                    (t.position().as_secs_f64()
-                                        * shared.source_rate.load(Ordering::Relaxed) as f64)
-                                        as u64
+                                    let device_frames = t.position().as_secs_f64()
+                                        * output_rate as f64;
+                                    (device_frames * source_rate as f64 / output_rate as f64) as u64
                                 }
                                 None => continue,
                             }

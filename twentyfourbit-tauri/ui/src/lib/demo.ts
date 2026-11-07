@@ -11,6 +11,37 @@ import type {
   WeeklyCharts,
 } from "./types";
 
+const rosesCover = `data:image/svg+xml;utf8,${encodeURIComponent(`
+<svg xmlns="http://www.w3.org/2000/svg" width="320" height="320">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#3b1326"/>
+      <stop offset=".5" stop-color="#2a0e1c"/>
+      <stop offset="1" stop-color="#170912"/>
+    </linearGradient>
+    <radialGradient id="bloom" cx=".66" cy=".3" r=".62">
+      <stop offset="0" stop-color="#e2688c" stop-opacity=".72"/>
+      <stop offset="1" stop-color="#e2688c" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="bloom2" cx=".2" cy=".8" r=".5">
+      <stop offset="0" stop-color="#a1325c" stop-opacity=".38"/>
+      <stop offset="1" stop-color="#a1325c" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <rect width="320" height="320" fill="url(#bg)"/>
+  <rect width="320" height="320" fill="url(#bloom)"/>
+  <rect width="320" height="320" fill="url(#bloom2)"/>
+  <g transform="translate(160 148)" fill="none" stroke="rgba(255,220,230,.42)">
+    <ellipse rx="52" ry="20" transform="rotate(-18)"/>
+    <ellipse rx="52" ry="20" transform="rotate(30)"/>
+    <ellipse rx="52" ry="20" transform="rotate(78)"/>
+    <ellipse rx="22" ry="22"/>
+    <ellipse rx="11" ry="11"/>
+  </g>
+  <text x="160" y="262" font-size="12" text-anchor="middle"
+        fill="rgba(255,220,232,.66)" font-family="Georgia, serif" letter-spacing="4.4">roses</text>
+</svg>`)}`;
+
 const cover = `data:image/svg+xml;utf8,${encodeURIComponent(`
 <svg xmlns="http://www.w3.org/2000/svg" width="320" height="320">
   <defs>
@@ -59,6 +90,28 @@ const results: SearchItem[] = rows.map(([name, player, album], i) => ({
   cover,
 }));
 
+const rosesRows: Array<[string, string, string]> = [
+  ["roses", "The Chainsmokers", "Bouquet"],
+  ["roses (Imanbek Remix)", "SAINt JHN", "roses (Remixes)"],
+  ["roses", "Agnes Obel", "Aventine"],
+  ["paper roses", "Gene Vincent", "Blue Jean Bop"],
+  ["bed of roses", "Bon Jovi", "Keep the Faith"],
+  ["every rose has its thorn", "Poison", "Open Up and Say… Ahh!"],
+  ["rose garden", "Lynn Anderson", "Rose Garden"],
+  ["wild roses", "Of Monsters and Men", "Beneath the Skin"],
+];
+
+const rosesResults: SearchItem[] = rosesRows.map(([name, player, album], i) => ({
+  id: `roses-${i}`,
+  name,
+  player,
+  album,
+  cover: rosesCover,
+}));
+
+/** The first roses track is what the demo shows as playing. */
+const rosesFirst = rosesResults[0];
+
 const charts: WeeklyCharts = {
   songs: rows.map((r, i) => ({ name: r[0], plays: 1418 - i * 97 })),
   artists: ["周杰伦", "陈奕迅", "王菲", "Beyond", "张学友", "蔡琴", "邓紫棋", "王杰"].map(
@@ -97,4 +150,33 @@ const lyrics: LyricLine[] = [
 /** Warm amber — the same family the demo cover glows with. */
 const accent: [number, number, number] = [206, 156, 96];
 
-export const demo = { results, charts, library, settings, lyrics, accent, cover };
+const rosesLyrics: LyricLine[] = [
+  "Take it slow, but it's not typical",
+  "He already knows that my love is fire",
+  "His heart was a stone, but then his hands roam",
+  "I turned him to gold and it took him higher",
+  "Say you'll never let me go",
+  "Deep in my bones, I can feel you",
+  "Take me back to a time when we weren't on my mind",
+  "I can be myself",
+  "Take it slow, but it's not typical",
+  "Say you'll never let me go",
+].map((text, i) => ({ at: i * 7200, text }));
+
+/** Warm rose — same family the roses cover glows with. */
+const rosesAccent: [number, number, number] = [214, 96, 124];
+
+export const demo = {
+  results,
+  rosesResults,
+  rosesLyrics,
+  charts,
+  library,
+  settings,
+  lyrics,
+  accent,
+  rosesAccent,
+  cover,
+  rosesCover,
+  rosesFirst,
+};

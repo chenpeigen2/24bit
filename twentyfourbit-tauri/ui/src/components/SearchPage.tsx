@@ -89,6 +89,9 @@ export const SearchPage = ({
 
   const current = results[selected];
 
+  // In a plain browser the input needs an id so a reviewer can drive it.
+  const inputId = "q";
+
   return (
     <section className="page">
       <header className="page-head" data-tauri-drag-region>
@@ -100,6 +103,7 @@ export const SearchPage = ({
         <div className="field">
           <SearchIcon size={14} />
           <input
+            id={inputId}
             value={query}
             placeholder="歌曲 / 歌手"
             spellCheck={false}

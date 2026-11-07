@@ -20,7 +20,7 @@
         "hiddenTitle": true,
         "windowEffects": {
           "effects": [
-            "underWindowBackground"
+            "windowBackground"
           ],
           "state": "followsWindowActiveState"
         }

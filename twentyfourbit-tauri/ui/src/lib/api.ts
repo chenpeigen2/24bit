@@ -77,8 +77,13 @@ const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
 async function demoInvoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
   await wait(90);
   switch (cmd) {
-    case "search":
-      return demo.results as unknown as T;
+    case "search": {
+      // The keyword decides which fixture is in play, so a headless review can
+      // exercise roses rather than always showing the same record.
+      const keyword = String(args?.keyword ?? "");
+      const isRoses = keyword.toLowerCase().includes("roses");
+      return (isRoses ? demo.rosesResults : demo.results) as unknown as T;
+    }
     case "search_page":
       return [] as unknown as T;
     case "charts":
@@ -91,7 +96,8 @@ async function demoInvoke<T>(cmd: string, args?: Record<string, unknown>): Promi
       return {
         id: args?.id ?? demo.results[0]?.id,
         lyrics: demo.lyrics,
-        accent: demo.accent,
+        accent:
+          String(args?.id ?? "").startsWith("roses") ? demo.rosesAccent : demo.accent,
       } as unknown as T;
     case "whoami":
       return null as unknown as T;

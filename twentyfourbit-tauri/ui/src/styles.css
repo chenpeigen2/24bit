@@ -14,15 +14,15 @@
 
 :root {
   /* warm ink */
-  --paper: rgba(253, 250, 249, 0.74);
+  --paper: rgba(252, 251, 252, 0.96);
   --ink: #1a1520;
   --ink-2: rgba(26, 21, 32, 0.60);
   --ink-3: rgba(26, 21, 32, 0.40);
   --ink-4: rgba(26, 21, 32, 0.24);
 
   /* surfaces: the OS supplies the vibrancy, these sit on top */
-  --chrome: rgba(255, 252, 249, 0.34);
-  --solid: #fffdfb;
+  --chrome: rgba(252, 251, 252, 0.90);
+  --solid: #fffefe;
   --fill: rgba(26, 21, 32, 0.045);
   --fill-2: rgba(26, 21, 32, 0.08);
   --hairline: rgba(26, 21, 32, 0.075);
@@ -84,14 +84,14 @@ input { font: inherit; color: inherit; }
 /* Warm charcoal, not blue-black: the same candlelight register as the light
    theme, just after sunset. Surfaces lift by lightness, the way the OS does it. */
 :root[data-theme="dark"] {
-  --paper: rgba(22, 18, 24, 0.90);
+  --paper: rgba(22, 18, 24, 0.95);
 
   --ink: #f6f1ec;
   --ink-2: rgba(246, 241, 236, 0.68);
   --ink-3: rgba(246, 241, 236, 0.46);
   --ink-4: rgba(246, 241, 236, 0.28);
 
-  --chrome: rgba(38, 32, 42, 0.62);
+  --chrome: rgba(30, 24, 34, 0.88);
   --solid: #221d28;
   --fill: rgba(255, 250, 245, 0.055);
   --fill-2: rgba(255, 250, 245, 0.10);

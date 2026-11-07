@@ -143,6 +143,8 @@ export const usePlayer = (
         artist: item.player,
         cover: item.cover || null,
         playing: true,
+        // A new track starts at the beginning. Leaving the old position here
+        // would highlight the wrong lyric until the engine caught up.
         position: 0,
         duration: 0,
       }));
@@ -200,6 +202,8 @@ export const usePlayer = (
         artist: item.player,
         cover: item.cover || null,
         playing: true,
+        // A new track starts at the beginning. Leaving the old position here
+        // would highlight the wrong lyric until the engine caught up.
         position: 0,
         duration: 0,
       }));

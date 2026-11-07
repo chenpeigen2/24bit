@@ -584,6 +584,33 @@ fn main() {
 
     tauri::Builder::default()
         .setup(|app| {
+            // Make sure the window is actually on screen. An earlier run left
+            // the process alive with nothing visible, which is indistinguishable
+            // from a crash from the user's side.
+            if let Some(window) = app.get_webview_window("main") {
+                use tauri::PhysicalPosition;
+
+                let _ = window.center();
+                let _ = window.show();
+                let _ = window.set_visible_on_all_workspaces(false);
+                let _ = window.set_focus();
+
+                // Temporary diagnostic: keep it out of fullscreen so a saved
+                // position cannot push it off a disconnected display.
+                let _ = window.set_fullscreen(false);
+
+                match window.outer_position() {
+                    Ok(pos) => tracing::info!("window at {pos:?}"),
+                    Err(e) => tracing::warn!("cannot read window position: {e}"),
+                }
+                match window.outer_size() {
+                    Ok(size) => tracing::info!("window size {size:?}"),
+                    Err(e) => tracing::warn!("cannot read window size: {e}"),
+                }
+
+                let _ = PhysicalPosition::<i32>::new(0, 0);
+            }
+
             let cfg = twentyfourbit_core::Config::load().unwrap_or_default();
 
             let mut builder = Client::builder().ip_placeholder(cfg.ip_placeholder.clone());

@@ -36,12 +36,27 @@ jobs:
             libxkbcommon-dev libwayland-dev libx11-dev libxcursor-dev \
             libxi-dev libxrandr-dev libxinerama-dev libgl1-mesa-dev \
             fonts-noto-cjk
-      - name: Test
-        env:
-          # No GPU on a runner; force software GL so the headless render test
-          # exercises the real path instead of skipping.
-          LIBGL_ALWAYS_SOFTWARE: "1"
-        run: cargo test --workspace --all-targets
+      # Split per crate on purpose: when something fails on a platform I cannot
+      # reproduce locally, the failed step name is the only diagnostic available
+      # from the public API without a token.
+      - name: Test core
+        env: { LIBGL_ALWAYS_SOFTWARE: "1" }
+        run: cargo test -p twentyfourbit-core --no-fail-fast
+
+      - name: Test player
+        env: { LIBGL_ALWAYS_SOFTWARE: "1" }
+        run: cargo test -p twentyfourbit-player --no-fail-fast
+
+      - name: Test gui
+        env: { LIBGL_ALWAYS_SOFTWARE: "1" }
+        run: cargo test -p twentyfourbit-gui --no-fail-fast
+
+      - name: Test cli
+        env: { LIBGL_ALWAYS_SOFTWARE: "1" }
+        run: cargo test -p twentyfourbit-cli --no-fail-fast
+
+      - name: Build all targets
+        run: cargo build --workspace --all-targets
 
   build:
     name: ${{ matrix.name }}

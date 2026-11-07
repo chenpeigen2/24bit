@@ -207,14 +207,14 @@ async fn expired_signed_url_is_actionable() {
 }
 
 fn tempdir() -> std::path::PathBuf {
-    let p = std::env::temp_dir().join(format!(
-        "24bit-test-{}-{}",
-        std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ));
+    // A monotonic counter, not just a timestamp: two tests starting in the same
+    // clock tick would otherwise share a directory, and one test's in-flight
+    // `.part` file would corrupt the other's resume assertions.
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+
+    let p = std::env::temp_dir().join(format!("24bit-test-{}-{n}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&p);
     std::fs::create_dir_all(&p).unwrap();
     p
 }

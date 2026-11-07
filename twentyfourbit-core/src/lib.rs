@@ -40,12 +40,14 @@
 //! # }
 //! ```
 
+pub mod cache;
 pub mod client;
 pub mod config;
 pub mod error;
 pub mod model;
 
 pub use client::{file_extension_for, part_path, Client, ClientBuilder, DEFAULT_BASE_URL};
+pub use cache::{Cache, CacheKey};
 pub use config::Config;
 pub use error::{Error, Result};
 pub use model::{

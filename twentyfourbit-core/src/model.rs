@@ -24,7 +24,7 @@ pub struct SearchItem {
 ///
 /// The site exposes three tiers through `findMusicPage`; tier `b` is currently
 /// broken server-side (it answers 500 for every id), so it is not modelled.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Quality {
     /// `type=a` — 至臻母带, typically 24bit/192kHz FLAC, ships lyrics.

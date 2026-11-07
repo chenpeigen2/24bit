@@ -361,6 +361,52 @@ impl Client {
         Ok(written)
     }
 
+    /// Fetch a track into the cache, or return the cached copy.
+    ///
+    /// This is the path every playback goes through. Two behaviours matter:
+    ///
+    /// * A cache hit performs **zero** network requests. Master-tier files are
+    ///   ~150MB, so re-downloading on every play would be unusable.
+    /// * A [`Error::ExpiredLink`] is retried exactly once with a freshly fetched
+    ///   detail. This is the one failure where a retry is certain to help,
+    ///   because the URL — not the request — is what expired.
+    pub async fn fetch_cached(
+        &self,
+        id: &str,
+        quality: Quality,
+        cache: &crate::cache::Cache,
+    ) -> Result<std::path::PathBuf> {
+        let key = crate::cache::CacheKey::new(id, quality);
+
+        if let Some(hit) = cache.lookup(&key) {
+            tracing::debug!(path = %hit.display(), "cache hit");
+            return Ok(hit);
+        }
+
+        let target = cache.path_for(&key);
+        if let Some(parent) = target.parent() {
+            tokio::fs::create_dir_all(parent).await.map_err(|e| Error::Io {
+                path: parent.to_path_buf(),
+                source: e,
+            })?;
+        }
+
+        let mut detail = self.track(id, quality).await?;
+
+        match self.download_to(&detail.download_url, &target).await {
+            Ok(_) => {}
+            Err(err) if err.is_retryable_with_fresh_link() => {
+                tracing::info!(id, "signed URL expired; fetching a fresh one");
+                detail = self.track(id, quality).await?;
+                self.download_to(&detail.download_url, &target).await?;
+            }
+            Err(err) => return Err(err),
+        }
+
+        cache.enforce_budget().ok();
+        Ok(target)
+    }
+
     // --------------------------------------------------------------- plumbing
 
     async fn post<T, B>(&self, path: &str, body: &B) -> Result<T>

@@ -1,0 +1,32 @@
+[package]
+name = "twentyfourbit-gui"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Desktop GUI for 24bit.net"
+
+[[bin]]
+name = "24bit-gui"
+path = "src/main.rs"
+
+[dependencies]
+twentyfourbit-core = { path = "../twentyfourbit-core" }
+twentyfourbit-player = { path = "../twentyfourbit-player" }
+eframe = { version = "0.37", default-features = false, features = ["glow", "default_fonts", "wayland", "x11"] }
+egui = "0.37"
+egui_extras = { version = "0.37", features = ["image"] }
+image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
+fontdb = "0.24"
+tokio.workspace = true
+reqwest = { workspace = true, features = ["blocking"] }
+serde.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+dirs = "7.0"
+toml = { version = "1.2", features = ["parse", "display", "serde"] }
+
+[dev-dependencies]
+wiremock = "0.6"
+egui_kittest = { version = "0.37", features = ["snapshot", "wgpu"] }

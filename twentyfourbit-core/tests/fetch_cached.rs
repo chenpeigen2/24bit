@@ -73,7 +73,7 @@ async fn second_fetch_uses_the_cache_without_network() {
     let cache = Cache::new(&dir, u64::MAX);
     let key = CacheKey::new("track-1", Quality::Master);
 
-    let first = client
+    let (first, first_detail) = client
         .fetch_cached("track-1", Quality::Master, &cache)
         .await
         .expect("first fetch");
@@ -83,7 +83,7 @@ async fn second_fetch_uses_the_cache_without_network() {
         "the first fetch must hit the network exactly once"
     );
 
-    let second = client
+    let (second, second_detail) = client
         .fetch_cached("track-1", Quality::Master, &cache)
         .await
         .expect("second fetch");
@@ -93,6 +93,10 @@ async fn second_fetch_uses_the_cache_without_network() {
         "the second fetch must make no network request at all"
     );
     assert_eq!(first, second, "both fetches must resolve to the same file");
+    assert_eq!(
+        first_detail.name, second_detail.name,
+        "the cached sidecar must carry the metadata, so no lookup is needed"
+    );
 
     let bytes = std::fs::read(&second).unwrap();
     assert_eq!(bytes.len(), 2048);
@@ -106,11 +110,11 @@ async fn different_quality_tiers_are_fetched_separately() {
     let dir = scratch("tiers");
     let cache = Cache::new(&dir, u64::MAX);
 
-    let master = client
+    let (master, _) = client
         .fetch_cached("track-1", Quality::Master, &cache)
         .await
         .unwrap();
-    let surround = client
+    let (surround, _) = client
         .fetch_cached("track-1", Quality::Surround, &cache)
         .await
         .unwrap();
@@ -179,7 +183,7 @@ async fn expired_link_is_retried_with_a_fresh_url() {
     let dir = scratch("expired");
     let cache = Cache::new(&dir, u64::MAX);
 
-    let path = client
+    let (path, _) = client
         .fetch_cached("track-1", Quality::Master, &cache)
         .await
         .expect("a stale link should be retried transparently");

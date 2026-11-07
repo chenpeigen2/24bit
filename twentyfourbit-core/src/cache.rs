@@ -89,6 +89,35 @@ impl Cache {
             .join(format!("{safe}.{}", "flac"))
     }
 
+    /// Where the metadata sidecar for `key` lives.
+    ///
+    /// Storing the track's title/artist next to the audio means a cache hit
+    /// needs no network at all — not even for the labels in a library view.
+    pub fn meta_path(&self, key: &CacheKey) -> PathBuf {
+        self.path_for(key).with_extension("json")
+    }
+
+    /// Read the stored metadata sidecar, if present and parseable.
+    pub fn read_meta<T: serde::de::DeserializeOwned>(&self, key: &CacheKey) -> Option<T> {
+        let text = std::fs::read_to_string(self.meta_path(key)).ok()?;
+        serde_json::from_str(&text).ok()
+    }
+
+    /// Write the metadata sidecar for `key`.
+    pub fn write_meta<T: serde::Serialize>(
+        &self,
+        key: &CacheKey,
+        value: &T,
+    ) -> std::io::Result<()> {
+        let path = self.meta_path(key);
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let text = serde_json::to_string(value)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+        std::fs::write(path, text)
+    }
+
     /// Return the cached path for `key` if it exists and is non-empty.
     ///
     /// A zero-length file is treated as absent so that a crash mid-write cannot
@@ -149,6 +178,9 @@ impl Cache {
             };
             let len = meta.len();
             if std::fs::remove_file(&path).is_ok() {
+                // Take the metadata sidecar with it, or the library view would
+                // show rows whose audio is gone.
+                let _ = std::fs::remove_file(path.with_extension("json"));
                 total = total.saturating_sub(len);
                 tracing::debug!(path = %path.display(), "evicted cached track");
             }

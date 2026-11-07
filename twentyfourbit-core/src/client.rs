@@ -38,6 +38,12 @@ pub const DEFAULT_MAX_ATTEMPTS: u32 = 3;
 /// immediate connection resets, not slow servers.
 const RETRY_BACKOFF: std::time::Duration = std::time::Duration::from_millis(250);
 
+/// Per-request timeout.
+///
+/// Without one, a half-open connection leaves a GUI spinner turning forever,
+/// which looks like a hang rather than an error.
+pub const DEFAULT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+
 /// Builds a [`Client`].
 #[derive(Debug, Clone)]
 pub struct ClientBuilder {
@@ -45,6 +51,7 @@ pub struct ClientBuilder {
     token: Option<String>,
     ip_placeholder: String,
     max_attempts: u32,
+    timeout: std::time::Duration,
 }
 
 impl Default for ClientBuilder {
@@ -54,6 +61,7 @@ impl Default for ClientBuilder {
             token: None,
             ip_placeholder: IP_PLACEHOLDER.to_owned(),
             max_attempts: DEFAULT_MAX_ATTEMPTS,
+            timeout: DEFAULT_TIMEOUT,
         }
     }
 }
@@ -77,6 +85,12 @@ impl ClientBuilder {
         self
     }
 
+    /// Override the per-request timeout.
+    pub fn timeout(mut self, timeout: std::time::Duration) -> Self {
+        self.timeout = timeout;
+        self
+    }
+
     /// How many times to retry a read before giving up.
     pub fn max_attempts(mut self, attempts: u32) -> Self {
         self.max_attempts = attempts.max(1);
@@ -91,6 +105,7 @@ impl ClientBuilder {
     /// Finish building.
     pub fn build(self) -> Result<Client> {
         let http = reqwest::Client::builder()
+            .timeout(self.timeout)
             .user_agent(concat!(
                 "24bit-cli/",
                 env!("CARGO_PKG_VERSION"),
@@ -363,24 +378,32 @@ impl Client {
 
     /// Fetch a track into the cache, or return the cached copy.
     ///
-    /// This is the path every playback goes through. Two behaviours matter:
+    /// Returns the local audio path together with its metadata, read from the
+    /// cache sidecar on a hit so that a repeat call performs **zero** network
+    /// requests. Master-tier files are ~150MB; re-downloading them on every play
+    /// would be unusable.
     ///
-    /// * A cache hit performs **zero** network requests. Master-tier files are
-    ///   ~150MB, so re-downloading on every play would be unusable.
-    /// * A [`Error::ExpiredLink`] is retried exactly once with a freshly fetched
-    ///   detail. This is the one failure where a retry is certain to help,
-    ///   because the URL — not the request — is what expired.
+    /// A [`Error::ExpiredLink`] is retried exactly once with a freshly fetched
+    /// detail: that is the one failure a retry is certain to fix, because the
+    /// URL — not the request — is what expired.
     pub async fn fetch_cached(
         &self,
         id: &str,
         quality: Quality,
         cache: &crate::cache::Cache,
-    ) -> Result<std::path::PathBuf> {
+    ) -> Result<(std::path::PathBuf, TrackDetail)> {
         let key = crate::cache::CacheKey::new(id, quality);
 
         if let Some(hit) = cache.lookup(&key) {
             tracing::debug!(path = %hit.display(), "cache hit");
-            return Ok(hit);
+            if let Some(detail) = cache.read_meta(&key) {
+                return Ok((hit, detail));
+            }
+            // Audio without a sidecar (older cache, or a hand-placed file):
+            // still usable, but the labels need one round trip.
+            let detail = self.track(id, quality).await?;
+            cache.write_meta(&key, &detail).ok();
+            return Ok((hit, detail));
         }
 
         let target = cache.path_for(&key);
@@ -403,8 +426,9 @@ impl Client {
             Err(err) => return Err(err),
         }
 
+        cache.write_meta(&key, &detail).ok();
         cache.enforce_budget().ok();
-        Ok(target)
+        Ok((target, detail))
     }
 
     // --------------------------------------------------------------- plumbing

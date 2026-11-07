@@ -1,5 +1,10 @@
 [workspace]
-members = ["twentyfourbit-core", "twentyfourbit-player", "twentyfourbit-cli"]
+members = [
+    "twentyfourbit-core",
+    "twentyfourbit-player",
+    "twentyfourbit-cli",
+    "twentyfourbit-gui",
+]
 resolver = "2"
 
 [workspace.package]

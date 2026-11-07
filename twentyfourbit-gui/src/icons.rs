@@ -132,6 +132,9 @@ pub enum Style {
     Accent,
     /// Filled with a surface colour. For selected/standing controls.
     Filled,
+    /// Hairline ring on the page colour; inverts to ink on hover. For row
+    /// actions that should read as buttons but not shout.
+    Outline,
 }
 
 /// An icon-only button of a given diameter.
@@ -141,6 +144,18 @@ pub fn button(ui: &mut Ui, icon: Icon, diameter: f32, style: Style) -> Response 
     let painter = ui.painter();
 
     let (bg, fg) = match style {
+        Style::Outline => (
+            Some(if hovered {
+                crate::theme::ACCENT
+            } else {
+                crate::theme::BG
+            }),
+            if hovered {
+                crate::theme::ON_ACCENT
+            } else {
+                crate::theme::TEXT
+            },
+        ),
         Style::Accent => (
             Some(crate::theme::ACCENT),
             if hovered {
@@ -165,6 +180,13 @@ pub fn button(ui: &mut Ui, icon: Icon, diameter: f32, style: Style) -> Response 
 
     if let Some(bg) = bg {
         painter.circle_filled(rect.center(), diameter / 2.0, bg);
+        if style == Style::Outline {
+            painter.circle_stroke(
+                rect.center(),
+                diameter / 2.0 - 0.5,
+                Stroke::new(1.0, crate::theme::BORDER_STRONG),
+            );
+        }
     }
 
     // The glyph occupies the middle 55% of the hit area, which keeps small
@@ -186,6 +208,18 @@ pub fn button_at(ui: &mut Ui, rect: Rect, icon: Icon, style: Style) -> Response 
     let painter = ui.painter();
 
     let (bg, fg) = match style {
+        Style::Outline => (
+            Some(if hovered {
+                crate::theme::ACCENT
+            } else {
+                crate::theme::BG
+            }),
+            if hovered {
+                crate::theme::ON_ACCENT
+            } else {
+                crate::theme::TEXT
+            },
+        ),
         Style::Accent => (
             Some(crate::theme::ACCENT),
             if hovered { crate::theme::ACCENT_HOVER } else { crate::theme::ON_ACCENT },
@@ -210,6 +244,13 @@ pub fn button_at(ui: &mut Ui, rect: Rect, icon: Icon, style: Style) -> Response 
 
     if let Some(bg) = bg {
         painter.circle_filled(rect.center(), rect.width().min(rect.height()) / 2.0, bg);
+        if style == Style::Outline {
+            painter.circle_stroke(
+                rect.center(),
+                rect.width().min(rect.height()) / 2.0 - 0.5,
+                Stroke::new(1.0, crate::theme::BORDER_STRONG),
+            );
+        }
     }
     paint(
         painter,

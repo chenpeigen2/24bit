@@ -562,7 +562,7 @@ impl App {
                         Align2::RIGHT_CENTER,
                         format!("v{}", env!("CARGO_PKG_VERSION")),
                         FontId::proportional(T_FAINT),
-                        Color32::from_rgb(72, 72, 84),
+                        TEXT_FAINT,
                     );
                 }
             });
@@ -796,7 +796,7 @@ impl App {
                     Align2::RIGHT_CENTER,
                     chip,
                     FontId::proportional(10.0),
-                    Color32::from_rgb(86, 86, 100),
+                    TEXT_FAINT,
                 );
             });
     }
@@ -810,7 +810,7 @@ impl App {
                 Vec2::splat(20.0),
             ),
             Icon::Music,
-            Color32::from_rgb(58, 58, 70),
+            TEXT_FAINT,
         );
         painter.text(
             Pos2::new(rect.left() + GUTTER + 32.0, rect.center().y),
@@ -844,9 +844,9 @@ impl App {
         ui.painter().rect_filled(rect, RADIUS_SM, CARD_HOVER);
         icons::paint(
             ui.painter(),
-            Rect::from_center_size(rect.center(), Vec2::splat(rect.width() * 0.42)),
+            Rect::from_center_size(rect.center(), Vec2::splat(rect.width() * 0.40)),
             Icon::Music,
-            Color32::from_rgb(96, 96, 104),
+            Color32::from_rgb(178, 178, 186),
         );
     }
 
@@ -1055,6 +1055,16 @@ impl App {
                         RowAction::Export => to_export = Some(item.id.clone()),
                         RowAction::None => {}
                     }
+                    if i + 1 < items.len() {
+                        let y = ui.cursor().top() - 1.0;
+                        let left = ui.cursor().left() + GUTTER + 76.0;
+                        let right = ui.cursor().left() + ui.available_width() - GUTTER;
+                        ui.painter().rect_filled(
+                            Rect::from_min_max(Pos2::new(left, y), Pos2::new(right, y + 1.0)),
+                            0.0,
+                            BORDER,
+                        );
+                    }
                 }
                 self.results = items;
                 ui.add_space(GUTTER);
@@ -1099,8 +1109,8 @@ impl App {
         }
 
         let cover_rect = Rect::from_min_max(
-            Pos2::new(rect.left() + 10.0, rect.top() + 10.0),
-            Pos2::new(rect.left() + 58.0, rect.bottom() - 10.0),
+            Pos2::new(rect.left() + 6.0, rect.top() + 6.0),
+            Pos2::new(rect.left() + 62.0, rect.bottom() - 6.0),
         );
         self.draw_cover(ui, &item.cover, cover_rect);
 
@@ -1128,12 +1138,7 @@ impl App {
             Pos2::new(rect.right() - 26.0, rect.center().y),
             Vec2::splat(34.0),
         );
-        let play = icons::button_at(
-            ui,
-            play_rect,
-            Icon::Play,
-            if hover { Style::Accent } else { Style::Filled },
-        );
+        let play = icons::button_at(ui, play_rect, Icon::Play, Style::Outline);
 
         let download_rect = Rect::from_center_size(
             Pos2::new(rect.right() - 70.0, rect.center().y),
@@ -1600,7 +1605,7 @@ fn choice_group(ui: &mut egui::Ui, rows: &[(&str, &str)], selected: Option<usize
     let height = row_h * rows.len() as f32;
     let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), height), Sense::hover());
 
-    icons::card(ui.painter(), rect, RADIUS_SM, CARD, None);
+    icons::card(ui.painter(), rect, RADIUS_SM, BG, None);
 
     let mut picked = None;
     for (i, (title, detail)) in rows.iter().enumerate() {
@@ -1621,10 +1626,8 @@ fn choice_group(ui: &mut egui::Ui, rows: &[(&str, &str)], selected: Option<usize
         if response.hovered() {
             painter.rect_filled(row, 0.0, CARD_HOVER);
         }
-        if is_selected {
-            // A tint, not a border: the group already has one container.
-            painter.rect_filled(row, 0.0, ACCENT_SOFT);
-        }
+        // Selection is carried by the radio dot alone. A filled row would be a
+        // second, louder statement of the same fact and muddies the card.
 
         let centre = Pos2::new(row.left() + 22.0, row.center().y);
         painter.circle_stroke(centre, 7.0, Stroke::new(1.5, BORDER_STRONG));
@@ -1714,8 +1717,9 @@ fn section(ui: &mut egui::Ui, title: &str, body: impl FnOnce(&mut egui::Ui)) {
     );
     ui.add_space(GAP);
     egui::Frame::NONE
-        .fill(CARD)
+        .fill(BG)
         .corner_radius(RADIUS as u8)
+        .stroke(Stroke::new(1.0, BORDER))
         .inner_margin(egui::Margin::same(16))
         .show(ui, |ui| {
             ui.set_width(ui.available_width());

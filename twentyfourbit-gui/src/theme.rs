@@ -1,67 +1,63 @@
 //! Visual identity.
 //!
-//! The target is the macOS native look rather than a themed toolkit: system
-//! greys, one system accent, SF as the Latin face, and hierarchy carried by type
-//! and spacing instead of borders and boxes.
+//! A light, paper-like surface: white where content lives, a slightly cooler
+//! grey for the chrome that frames it, and near-black type. The interface has
+//! no colour of its own — every saturated pixel on screen comes from album art.
 //!
 //! The rules encoded here:
 //!
-//! * **System greys, not invented blacks.** macOS elevates with lightness
-//!   (#1C1C1E → #2C2C2E → #3A3A3C), which is why a native window has depth
-//!   without shadows.
-//! * **Colour comes from the artwork, not the chrome.** The interface is
-//!   monochrome; the only saturated pixels are album covers. Any tint in the
-//!   chrome competes with them and makes a music app look like a dashboard.
-//! * **One accent, and it is white.** White is the strongest signal available
-//!   on a dark surface, so "active" needs nothing else.
-//! * **Hairlines.** Separators are 1px at ~8% white, never a visible border.
-//! * **Type does the work.** Four sizes with clear jobs; colour is used only for
-//!   emphasis that survives a squint test.
+//! * **Light is a hierarchy, not a flat white.** Window and panels sit 3–5%
+//!   apart in luminance; that difference is what makes a layout read as layers
+//!   instead of one sheet.
+//! * **One accent, and it is ink.** Near-black is the strongest signal available
+//!   on paper, so "active" needs no hue at all.
+//! * **Hairlines.** Separators are 1px at ~10% black, never a drawn border.
+//! * **Type does the work.** Four sizes with clear jobs; weight and spacing
+//!   carry hierarchy before colour does.
 
 use egui::{Color32, CornerRadius, Stroke, Visuals};
 
 // ---------------------------------------------------------------- surfaces
 
-/// Window background ("system background" in dark mode).
-pub const BG: Color32 = Color32::from_rgb(28, 28, 30);
-/// Sidebar and transport — one step up from the content plane.
-pub const PANEL: Color32 = Color32::from_rgb(36, 36, 38);
-/// Cards and inputs ("secondary background").
-pub const CARD: Color32 = Color32::from_rgb(44, 44, 46);
-/// Rows and buttons under the pointer.
-pub const CARD_HOVER: Color32 = Color32::from_rgb(58, 58, 60);
-/// Hairline separators (~7% white).
-pub const BORDER: Color32 = Color32::from_rgba_premultiplied(20, 20, 20, 255);
+/// Content plane — paper.
+pub const BG: Color32 = Color32::from_rgb(255, 255, 255);
+/// Chrome: sidebar, header, transport. A hair cooler than the content plane.
+pub const PANEL: Color32 = Color32::from_rgb(240, 240, 244);
+/// Inputs, rows and grouped containers sitting on the content plane.
+pub const CARD: Color32 = Color32::from_rgb(240, 240, 244);
+/// The same, under the pointer.
+pub const CARD_HOVER: Color32 = Color32::from_rgb(230, 230, 235);
+/// Hairline separators (~10% black).
+pub const BORDER: Color32 = Color32::from_rgb(219, 219, 224);
 /// Hairline under the pointer.
-pub const BORDER_STRONG: Color32 = Color32::from_rgb(78, 78, 82);
+pub const BORDER_STRONG: Color32 = Color32::from_rgb(198, 198, 204);
 
 // -------------------------------------------------------------------- text
 
-/// Primary label.
-pub const TEXT: Color32 = Color32::from_rgb(255, 255, 255);
+/// Primary label — near-black rather than pure black, which is easier on paper.
+pub const TEXT: Color32 = Color32::from_rgb(29, 29, 31);
 /// Secondary label.
-pub const TEXT_MUTED: Color32 = Color32::from_rgb(163, 163, 168);
+pub const TEXT_MUTED: Color32 = Color32::from_rgb(110, 110, 115);
 /// Tertiary label.
-pub const TEXT_FAINT: Color32 = Color32::from_rgb(138, 138, 143);
+pub const TEXT_FAINT: Color32 = Color32::from_rgb(134, 134, 139);
 
 // ------------------------------------------------------------------ accent
 
-/// The accent is plain white: on a dark surface it is the strongest signal
-/// available, and it keeps the chrome free of a second hue.
-pub const ACCENT: Color32 = Color32::from_rgb(245, 245, 247);
-/// Glyph colour on an accent fill.
-pub const ON_ACCENT: Color32 = Color32::from_rgb(18, 18, 20);
-/// Accent under the pointer.
-pub const ACCENT_HOVER: Color32 = Color32::from_rgb(255, 255, 255);
-/// Selection: a whisper of white rather than a colour.
-pub const ACCENT_SOFT: Color32 = Color32::from_rgb(48, 48, 51);
-/// Destructive actions, used only on the control that destroys something.
-pub const DANGER: Color32 = Color32::from_rgb(214, 118, 118);
+/// Ink: the only accent.
+pub const ACCENT: Color32 = Color32::from_rgb(29, 29, 31);
+/// Glyph colour on an ink fill.
+pub const ON_ACCENT: Color32 = Color32::from_rgb(255, 255, 255);
+/// Ink under the pointer.
+pub const ACCENT_HOVER: Color32 = Color32::from_rgb(0, 0, 0);
+/// Selection: a tint of grey, never a hue.
+pub const ACCENT_SOFT: Color32 = Color32::from_rgb(222, 222, 228);
+/// Destructive actions.
+pub const DANGER: Color32 = Color32::from_rgb(197, 26, 34);
 
 // ------------------------------------------------------------------- scale
 
 /// Page titles.
-pub const T_TITLE: f32 = 22.0;
+pub const T_TITLE: f32 = 24.0;
 /// Section headers.
 pub const T_SECTION: f32 = 13.0;
 /// Item titles in lists.
@@ -77,7 +73,7 @@ pub const T_FAINT: f32 = 10.5;
 pub const GUTTER: f32 = 28.0;
 /// Gap between cards.
 pub const GAP: f32 = 8.0;
-/// Card corner radius (macOS "large" rounding).
+/// Card corner radius.
 pub const RADIUS: f32 = 10.0;
 /// Small radius for covers, chips and rows.
 pub const RADIUS_SM: f32 = 7.0;
@@ -91,20 +87,31 @@ pub const TRANSPORT_H: f32 = 96.0;
 /// Status strip height.
 pub const STATUS_H: f32 = 26.0;
 
+/// A soft shadow, for the few surfaces that float above the page.
+pub fn shadow() -> egui::epaint::Shadow {
+    egui::epaint::Shadow {
+        offset: [0, 1],
+        blur: 8,
+        spread: 0,
+        color: Color32::from_black_alpha(18),
+    }
+}
+
 /// Apply the palette and metrics to a context.
 pub fn apply(ctx: &egui::Context) {
-    let mut visuals = Visuals::dark();
+    let mut visuals = Visuals::light();
 
     visuals.override_text_color = Some(TEXT);
     visuals.panel_fill = BG;
-    visuals.window_fill = CARD;
-    visuals.extreme_bg_color = Color32::from_rgb(20, 20, 22);
+    visuals.window_fill = Color32::WHITE;
+    visuals.extreme_bg_color = Color32::from_rgb(250, 250, 252);
     visuals.faint_bg_color = CARD;
     visuals.selection.bg_fill = ACCENT_SOFT;
-    visuals.selection.stroke = Stroke::new(1.0, TEXT_MUTED);
+    visuals.selection.stroke = Stroke::new(1.0, TEXT);
     visuals.hyperlink_color = TEXT;
     visuals.window_stroke = Stroke::new(1.0, BORDER);
     visuals.window_corner_radius = CornerRadius::same(12);
+    visuals.window_shadow = shadow();
 
     let r = CornerRadius::same(RADIUS_SM as u8);
 
@@ -162,21 +169,17 @@ pub fn apply(ctx: &egui::Context) {
 /// Paint the window backdrop.
 ///
 /// Native windows are a flat fill; a gradient would read as decoration, so this
-/// exists only to guarantee that no part of the window is left unpainted when a
-/// panel does not cover it.
+/// exists only to guarantee no part of the window is left unpainted when a panel
+/// does not cover it.
 pub fn paint_backdrop(painter: &egui::Painter, rect: egui::Rect) {
     painter.rect_filled(rect, 0.0, BG);
 }
 
 /// Install the fonts: SF (or the platform equivalent) for Latin, and a CJK face
 /// behind it for Chinese.
-///
-/// Returns the CJK family name, or `None` when no CJK font was found (in which
-/// case the caller warns rather than silently drawing tofu).
 pub fn install_fonts(ctx: &egui::Context) -> Option<String> {
     let mut fonts = egui::FontDefinitions::default();
 
-    // Latin first: this is what makes the chrome look native.
     if let Some(ui_font) = crate::fonts::find_ui_font() {
         if let Some(bytes) = crate::fonts::load_bytes(&ui_font) {
             let mut data = egui::FontData::from_owned((*bytes).clone());
@@ -185,8 +188,7 @@ pub fn install_fonts(ctx: &egui::Context) -> Option<String> {
                 .font_data
                 .insert("ui".to_owned(), std::sync::Arc::new(data));
 
-            // Put the system face *ahead* of egui's bundled one so Latin text
-            // renders in SF.
+            // Ahead of egui's bundled face so Latin renders in SF.
             for family in [egui::FontFamily::Proportional, egui::FontFamily::Monospace] {
                 fonts
                     .families
@@ -206,7 +208,6 @@ pub fn install_fonts(ctx: &egui::Context) -> Option<String> {
                 .font_data
                 .insert("cjk".to_owned(), std::sync::Arc::new(data));
 
-            // Appended, so Latin keeps the system face and Chinese resolves here.
             for family in [egui::FontFamily::Proportional, egui::FontFamily::Monospace] {
                 fonts
                     .families

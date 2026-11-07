@@ -1,0 +1,22 @@
+[package]
+name = "twentyfourbit-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Unofficial HTTP API client for 24bit.net"
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+reqwest.workspace = true
+futures-util.workspace = true
+tracing.workspace = true
+dirs = "7.0"
+toml = { version = "1.2", features = ["parse", "display", "serde"] }
+
+[dev-dependencies]
+wiremock = "0.6"
+

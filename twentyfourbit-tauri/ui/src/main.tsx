@@ -5,15 +5,8 @@ import { demoSeed } from "./lib/api";
 import { applyAccent, applyAmbient } from "./lib/theme";
 import "./styles.css";
 
-// Paint the theme before the first frame. Doing this in an effect leaves one
-// frame with the neutral accent, which reads as a flash of grey.
-if (demoSeed) {
-  applyAccent(demoSeed.accent);
-  applyAmbient(demoSeed.cover);
-} else {
-  applyAccent();
-}
-
+// Paint the theme and accent before the first frame. Theme-dependent accent
+// text must not be computed against an uninitialised root element.
 const storedTheme = localStorage.getItem("24bit.theme");
 const forcedTheme = new URLSearchParams(location.search).get("theme");
 if (forcedTheme === "light" || forcedTheme === "dark") {
@@ -26,6 +19,13 @@ if (forcedTheme === "light" || forcedTheme === "dark") {
   ).matches
     ? "dark"
     : "light";
+}
+
+if (demoSeed) {
+  applyAccent(demoSeed.accent);
+  applyAmbient(demoSeed.cover);
+} else {
+  applyAccent();
 }
 
 createRoot(document.getElementById("root")!).render(

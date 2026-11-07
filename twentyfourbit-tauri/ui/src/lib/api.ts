@@ -46,7 +46,7 @@ export const api = {
   deleteTrack: (path: string) => invoke<void>("delete_track", { path }),
   reveal: (path: string) => invoke<void>("reveal", { path }),
   mute: (muted: boolean, restore: number) => invoke<number>("mute", { muted, restore }),
-  toggle: () => invoke<void>("toggle"),
+  toggle: (playing: boolean) => invoke<boolean>("toggle", { playing }),
   pause: () => invoke<void>("pause"),
   restart: () => invoke<void>("restart"),
   seek: (args: { seconds?: number; fraction?: number }) => invoke<void>("seek", args),
@@ -56,20 +56,41 @@ export const api = {
 
 export const onPlayer = (fn: (snapshot: PlayerSnapshot) => void): (() => void) => {
   if (!isTauri) return () => {};
-  let unlisten: (() => void) | undefined;
-  void tauriListen<PlayerSnapshot>("player", (e) => fn(e.payload)).then((u) => {
-    unlisten = u;
-  });
-  return () => unlisten?.();
+  let disposed = false;
+  let timer: number | undefined;
+
+  // Use the same command channel as transport controls. Event delivery could
+  // leave the native WebView showing the optimistic zero-duration snapshot
+  // forever even while the engine advanced normally.
+  const poll = async () => {
+    try {
+      const snapshot = await tauriInvoke<PlayerSnapshot>("get_player_snapshot");
+      if (!disposed) fn(snapshot);
+    } catch {
+      // The next tick retries; a transient command failure must not stop time.
+    } finally {
+      if (!disposed) timer = window.setTimeout(() => void poll(), 100);
+    }
+  };
+  void poll();
+  return () => {
+    disposed = true;
+    if (timer !== undefined) window.clearTimeout(timer);
+  };
 };
 
 export const onProgress = (fn: (payload: ProgressPayload) => void): (() => void) => {
   if (!isTauri) return () => {};
+  let disposed = false;
   let unlisten: (() => void) | undefined;
   void tauriListen<ProgressPayload>("progress", (e) => fn(e.payload)).then((u) => {
-    unlisten = u;
+    if (disposed) u();
+    else unlisten = u;
   });
-  return () => unlisten?.();
+  return () => {
+    disposed = true;
+    unlisten?.();
+  };
 };
 
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -82,7 +103,13 @@ async function demoInvoke<T>(cmd: string, args?: Record<string, unknown>): Promi
       // exercise roses rather than always showing the same record.
       const keyword = String(args?.keyword ?? "");
       const isRoses = keyword.toLowerCase().includes("roses");
-      return (isRoses ? demo.rosesResults : demo.results) as unknown as T;
+      if (isRoses) return demo.rosesResults as unknown as T;
+      const normalized = keyword.toLocaleLowerCase();
+      return demo.results.filter((item) =>
+        [item.name, item.player, item.album].some((value) =>
+          value.toLocaleLowerCase().includes(normalized),
+        ),
+      ) as unknown as T;
     }
     case "search_page":
       return [] as unknown as T;
@@ -99,6 +126,8 @@ async function demoInvoke<T>(cmd: string, args?: Record<string, unknown>): Promi
         accent:
           String(args?.id ?? "").startsWith("roses") ? demo.rosesAccent : demo.accent,
       } as unknown as T;
+    case "toggle":
+      return Boolean(args?.playing) as unknown as T;
     case "whoami":
       return null as unknown as T;
     default:

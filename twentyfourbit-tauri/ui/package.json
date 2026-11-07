@@ -1,18 +1,20 @@
 {
   "name": "24bit-ui",
   "private": true,
-  "version": "0.1.0",
+  "version": "1.0.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test:ui": "playwright test"
   },
   "dependencies": {
     "react": "^19.2.0",
     "react-dom": "^19.2.0"
   },
   "devDependencies": {
+    "@playwright/test": "^1.65.0",
     "@tauri-apps/api": "^2.9.0",
     "@types/react": "^19.2.0",
     "@types/react-dom": "^19.2.0",

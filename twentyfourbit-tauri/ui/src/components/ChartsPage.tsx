@@ -53,11 +53,17 @@ const Column = ({
   <div className="chart">
     <h3>{title}</h3>
     {rows.map((row, i) => (
-      <div key={`${row.name}-${i}`} className="chart-row" onClick={() => onPick(row.name)}>
-        <div className="chart-rank">{i + 1}</div>
-        <div className="chart-name">{row.name}</div>
-        <div className="chart-plays">{row.plays}</div>
-      </div>
+      <button
+        type="button"
+        key={`${row.name}-${i}`}
+        className="chart-row"
+        onClick={() => onPick(row.name)}
+        aria-label={`搜索${title === "歌手" ? "歌手" : "歌曲"}${row.name}，本周播放 ${row.plays} 次`}
+      >
+        <span className="chart-rank">{i + 1}</span>
+        <span className="chart-name">{row.name}</span>
+        <span className="chart-plays">{row.plays.toLocaleString()}</span>
+      </button>
     ))}
   </div>
 );

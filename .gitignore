@@ -7,3 +7,5 @@
 # frontend
 node_modules/
 twentyfourbit-tauri/ui/dist/
+twentyfourbit-tauri/ui/test-results/
+twentyfourbit-tauri/ui/playwright-report/

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { api, demoSeed, onProgress } from "./lib/api";
 import { bytes } from "./lib/format";
 import { applyAmbient } from "./lib/theme";
@@ -31,6 +31,7 @@ export default function App() {
   const [status, setStatus] = useState("");
   const [libraryKey, setLibraryKey] = useState(0);
   const [searchSeed, setSearchSeed] = useState<string | null>(null);
+  const pendingOperation = useRef(0);
 
   const player = usePlayer(quality, (m) => push(m, "err"));
 
@@ -84,14 +85,17 @@ export default function App() {
 
   const handlePlay = useCallback(
     async (item: SearchItem, list: SearchItem[]) => {
+      const operation = ++pendingOperation.current;
       setPending(item.id);
       setProgress(0);
       setStatus("准备中…");
       try {
         await player.play(item, list);
       } finally {
-        setPending(null);
-        setStatus("");
+        if (operation === pendingOperation.current) {
+          setPending(null);
+          setStatus("");
+        }
         void refreshCache();
       }
     },
@@ -100,18 +104,22 @@ export default function App() {
 
   const handleDownload = useCallback(
     async (item: SearchItem) => {
+      const operation = ++pendingOperation.current;
       setPending(item.id);
       setProgress(0);
       setStatus("准备下载…");
       try {
         const path = await api.export(item.id, quality);
+        if (operation !== pendingOperation.current) return;
         push(`已保存 ${path.split("/").pop() ?? ""}`);
         setLibraryKey((k) => k + 1);
       } catch (e) {
-        push(String(e), "err");
+        if (operation === pendingOperation.current) push(String(e), "err");
       } finally {
-        setPending(null);
-        setStatus("");
+        if (operation === pendingOperation.current) {
+          setPending(null);
+          setStatus("");
+        }
         void refreshCache();
       }
     },
@@ -120,7 +128,7 @@ export default function App() {
 
   const handleLibraryPlay = useCallback(
     async (row: LibraryRow) => {
-      await player.playPath(row.path, row.cover);
+      await player.playPath(row.path, row.cover, row.title, row.subtitle);
       push(`正在播放 ${row.title}`);
     },
     [player, push],
@@ -131,10 +139,14 @@ export default function App() {
     const onKey = (e: KeyboardEvent) => {
       const el = document.activeElement;
       const typing =
-        el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement;
+        el instanceof HTMLElement &&
+        (el.matches("input, textarea, select") || el.isContentEditable);
       if (typing) return;
 
-      if (e.code === "Space") {
+      // Space on a focused control belongs to that control. Treating it as a
+      // global transport shortcut also cancels the button's native click.
+      const interactive = el instanceof HTMLElement && el.matches("button, a, [role='slider']");
+      if (e.code === "Space" && !interactive) {
         e.preventDefault();
         player.toggle();
       } else if (e.key === "ArrowRight" && e.shiftKey) {
@@ -146,7 +158,10 @@ export default function App() {
       } else if (e.key === "/") {
         e.preventDefault();
         setPage("search");
-        document.querySelector<HTMLInputElement>(".field input")?.focus();
+        // The input is mounted by the state update, not before it.
+        requestAnimationFrame(() => {
+          document.querySelector<HTMLInputElement>(".field input")?.focus();
+        });
       }
     };
     window.addEventListener("keydown", onKey);
@@ -185,6 +200,7 @@ export default function App() {
               lyrics={player.lyrics}
               position={player.snapshot.position}
               onSeek={player.seekTo}
+              initialQuery={searchSeed ?? undefined}
             />
           )}
           {page === "charts" && (
@@ -192,15 +208,6 @@ export default function App() {
               onPick={(name) => {
                 setSearchSeed(name);
                 setPage("search");
-                // Let the search page mount before driving its input.
-                requestAnimationFrame(() => {
-                  const input = document.querySelector<HTMLInputElement>(".field input");
-                  if (input) {
-                    input.value = name;
-                    input.dispatchEvent(new Event("input", { bubbles: true }));
-                    input.focus();
-                  }
-                });
               }}
             />
           )}
@@ -221,6 +228,8 @@ export default function App() {
               onAccount={setAccount}
               theme={theme}
               onTheme={setTheme}
+              playbackMode={player.mode}
+              onCyclePlaybackMode={player.cycleMode}
             />
           )}
         </main>
@@ -228,12 +237,13 @@ export default function App() {
         <PlayerBar
           snapshot={player.snapshot}
           playing={player.playing}
+          mode={player.mode}
           volume={player.volume}
           muted={player.muted}
           onToggle={player.toggle}
           onStep={player.step}
+          onCycleMode={player.cycleMode}
           onSeek={player.seekFraction}
-          onRestart={player.restart}
           onVolume={player.setVolume}
           onMute={player.toggleMute}
         />

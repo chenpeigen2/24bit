@@ -23,7 +23,7 @@ echo "==> bundle"
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$ROOT/target/release/twentyfourbit-tauri" "$APP/Contents/MacOS/24bit"
-cp "$ROOT/assets/icon.icns" "$APP/Contents/Resources/icon.icns"
+cp "$ROOT/twentyfourbit-tauri/icons/icon.icns" "$APP/Contents/Resources/icon.icns"
 
 cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>

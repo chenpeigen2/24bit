@@ -57,6 +57,8 @@ export interface PendingTrack {
 
 export interface PlayerSnapshot {
   playing: boolean;
+  /** True only for the engine's terminal Finished phase, never a normal pause. */
+  ended: boolean;
   position: number;
   duration: number;
   title: string | null;
@@ -74,5 +76,7 @@ export interface ProgressPayload {
   done: number;
   total: number | null;
 }
+
+export type PlaybackMode = "sequential" | "repeat-all" | "repeat-one" | "shuffle";
 
 export type Page = "search" | "charts" | "library" | "settings";

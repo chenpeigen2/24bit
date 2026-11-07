@@ -10,7 +10,7 @@ interface Props {
   refreshKey: number;
 }
 
-/** Cached tracks. Deletion needs a second click; everything else is one. */
+/** Cached tracks as an artwork grid, rather than three rows lost in blank space. */
 export const LibraryPage = ({ onPlay, onToast, onSearch, refreshKey }: Props) => {
   const [rows, setRows] = useState<LibraryRow[] | null>(null);
   const [armed, setArmed] = useState<string | null>(null);
@@ -35,11 +35,18 @@ export const LibraryPage = ({ onPlay, onToast, onSearch, refreshKey }: Props) =>
   }, [armed]);
 
   return (
-    <section className="page">
+    <section className="page library-page">
       <header className="page-head" data-tauri-drag-region>
         <h1>音乐库</h1>
         <p>已缓存的曲目，可离线播放</p>
       </header>
+
+      {rows !== null && rows.length > 0 && (
+        <div className="library-summary">
+          <strong>{rows.length} 首曲目</strong>
+          <span>保存在本机，无需联网即可播放</span>
+        </div>
+      )}
 
       {rows === null ? (
         <div className="list-meta">加载中…</div>
@@ -55,33 +62,32 @@ export const LibraryPage = ({ onPlay, onToast, onSearch, refreshKey }: Props) =>
           </button>
         </div>
       ) : (
-        <div className="list">
+        <div className="library-grid">
           {rows.map((row) => (
-            <div key={row.path} className="row">
-              <div
-                className="row-art"
+            <article key={row.path} className="library-card">
+              <button
+                type="button"
+                className="library-cover"
                 style={row.cover ? { backgroundImage: `url("${row.cover}")` } : undefined}
-              />
-              <div className="row-text">
-                <div className="row-title">{row.title}</div>
-                <div className="row-sub">{row.subtitle}</div>
+                aria-label={`播放 ${row.title}`}
+                onClick={() => onPlay(row)}
+              >
+                <span className="library-play"><PlayIcon size={20} /></span>
+              </button>
+              <div className="library-card-text">
+                <div className="row-title" title={row.title}>{row.title}</div>
+                <div className="row-sub" title={row.subtitle}>{row.subtitle}</div>
               </div>
-              <div className="row-actions">
-                <button className="icon-btn solid" title="播放" onClick={() => onPlay(row)}>
-                  <PlayIcon size={14} />
-                </button>
+              <div className="library-card-actions">
                 <button
-                  className="icon-btn"
-                  title="在访达中显示"
-                  onClick={() =>
-                    api.reveal(row.path).catch((e) => onToast(String(e), "err"))
-                  }
+                  type="button"
+                  onClick={() => api.reveal(row.path).catch((e) => onToast(String(e), "err"))}
                 >
-                  <FolderIcon size={14} />
+                  <FolderIcon size={13} /> 显示
                 </button>
                 <button
-                  className={`icon-btn${armed === row.path ? " danger" : ""}`}
-                  title={armed === row.path ? "再点一次删除" : "从缓存删除"}
+                  type="button"
+                  className={armed === row.path ? "danger" : ""}
                   onClick={async () => {
                     if (armed !== row.path) {
                       setArmed(row.path);
@@ -98,10 +104,10 @@ export const LibraryPage = ({ onPlay, onToast, onSearch, refreshKey }: Props) =>
                     }
                   }}
                 >
-                  <TrashIcon size={14} />
+                  <TrashIcon size={13} /> {armed === row.path ? "确认" : "删除"}
                 </button>
               </div>
-            </div>
+            </article>
           ))}
         </div>
       )}

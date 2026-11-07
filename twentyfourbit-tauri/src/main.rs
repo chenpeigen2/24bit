@@ -22,6 +22,8 @@ pub struct AppState {
     /// Metadata for whatever is loaded, so the player bar can label it without
     /// the frontend having to remember.
     current: Mutex<Option<TrackDetail>>,
+    /// Last position and phase the publisher saw, for diagnosing a stalled bar.
+    last_seen: Mutex<(u64, String)>,
     /// The track being fetched right now.
     ///
     /// A master file is ~150MB, so the window between "clicked play" and "the
@@ -53,6 +55,8 @@ struct PendingTrack {
 #[derive(Serialize, Clone)]
 struct PlayerSnapshot {
     playing: bool,
+    /// Explicit terminal state; the UI must not infer EOF from a paused bar.
+    ended: bool,
     position: u64,
     duration: u64,
     title: Option<String>,
@@ -67,6 +71,44 @@ struct PlayerSnapshot {
     /// Set while a track is being fetched. Authoritative: the frontend does not
     /// have to guess what is happening.
     pending: Option<PendingTrack>,
+}
+
+fn player_snapshot(state: &AppState) -> PlayerSnapshot {
+    let engine = state.engine();
+    let ready = engine.is_some();
+    let detail = state.current.lock().unwrap().clone();
+    let pending = state.pending.lock().unwrap().clone();
+
+    match engine.as_ref().and_then(|e| e.snapshot().transport) {
+        Some(t) => PlayerSnapshot {
+            playing: t.phase() == twentyfourbit_player::Phase::Playing,
+            ended: t.phase() == twentyfourbit_player::Phase::Finished,
+            position: t.position().as_millis() as u64,
+            duration: t.duration().as_millis() as u64,
+            title: detail.as_ref().map(|d| d.name.clone()),
+            artist: detail.as_ref().map(|d| d.player.clone()),
+            quality: detail.as_ref().map(|d| d.quality.clone()),
+            cover: detail.as_ref().map(|d| d.cover.clone()),
+            size: detail.as_ref().map(|d| d.size.clone()),
+            album: detail.as_ref().map(|d| d.album.clone()),
+            engine_ready: ready,
+            pending,
+        },
+        None => PlayerSnapshot {
+            playing: false,
+            ended: false,
+            position: 0,
+            duration: 0,
+            title: detail.as_ref().map(|d| d.name.clone()),
+            artist: detail.as_ref().map(|d| d.player.clone()),
+            quality: detail.as_ref().map(|d| d.quality.clone()),
+            cover: detail.as_ref().map(|d| d.cover.clone()),
+            size: detail.as_ref().map(|d| d.size.clone()),
+            album: detail.as_ref().map(|d| d.album.clone()),
+            engine_ready: ready,
+            pending,
+        },
+    }
 }
 
 #[derive(Serialize)]
@@ -117,6 +159,7 @@ async fn prepare(
     id: String,
     quality: String,
 ) -> Result<Prepared, String> {
+    tracing::info!(id, quality, "prepare requested");
     let tier = parse_quality(&quality);
 
     // Label the track before the transfer starts. Without this the player bar
@@ -182,8 +225,8 @@ async fn prepare(
         .unwrap_or_default();
 
     if let Some(engine) = state.engine() {
+        // Keep the user's volume across tracks; the engine owns it globally.
         engine.play(path);
-        engine.set_volume(1.0);
     }
 
     let accent = cover_accent(&detail.cover).unwrap_or([70, 70, 78]);
@@ -239,6 +282,13 @@ async fn settings(state: State<'_, AppState>) -> Result<Settings, String> {
 }
 
 #[tauri::command]
+async fn get_player_snapshot(state: State<'_, AppState>) -> Result<PlayerSnapshot, String> {
+    static CONNECTED: std::sync::Once = std::sync::Once::new();
+    CONNECTED.call_once(|| tracing::info!("frontend snapshot polling connected"));
+    Ok(player_snapshot(state.inner()))
+}
+
+#[tauri::command]
 async fn set_quality(state: State<'_, AppState>, quality: String) -> Result<(), String> {
     let tier = parse_quality(&quality);
     *state.quality.lock().unwrap() = tier;
@@ -247,21 +297,49 @@ async fn set_quality(state: State<'_, AppState>, quality: String) -> Result<(), 
     cfg.save().map_err(|e| e.to_string())
 }
 
-#[tauri::command]
-async fn toggle(state: State<'_, AppState>) -> Result<(), String> {
-    if let Some(engine) = state.engine() {
-        let playing = engine
-            .snapshot()
-            .transport
-            .map(|t| t.phase() == twentyfourbit_player::Phase::Playing)
-            .unwrap_or(false);
-        if playing {
-            engine.pause();
-        } else {
-            engine.resume();
+/// Seek within the current decoder, or restart it when the old decoder has
+/// already reached EOF. `Transport::resume` alone cannot revive `Finished`:
+/// its decoder thread has no more samples to produce.
+fn play_position(engine: &twentyfourbit_player::Engine, position: std::time::Duration, resume: bool) {
+    let snapshot = engine.snapshot();
+    let finished = snapshot
+        .transport
+        .as_ref()
+        .map(|t| t.phase() == twentyfourbit_player::Phase::Finished)
+        .unwrap_or(false);
+
+    if finished {
+        if let Some(path) = snapshot.current {
+            engine.play(path);
+            if !position.is_zero() {
+                // Commands are ordered: the new decoder is ready before seek.
+                engine.seek(position);
+            }
+            return;
         }
     }
-    Ok(())
+
+    engine.seek(position);
+    if resume {
+        engine.resume();
+    }
+}
+
+#[tauri::command]
+async fn toggle(state: State<'_, AppState>, playing: Option<bool>) -> Result<bool, String> {
+    let engine = state.engine().ok_or("没有可用的音频输出设备")?;
+    let phase = engine.snapshot().transport.map(|t| t.phase());
+    let target = playing.unwrap_or(phase != Some(twentyfourbit_player::Phase::Playing));
+    tracing::info!(target, ?phase, "toggle requested");
+
+    match phase {
+        Some(twentyfourbit_player::Phase::Finished) if target => {
+            play_position(&engine, std::time::Duration::ZERO, true);
+        }
+        _ if target => engine.resume(),
+        _ => engine.pause(),
+    }
+    Ok(target)
 }
 
 #[tauri::command]
@@ -275,8 +353,7 @@ async fn pause(state: State<'_, AppState>) -> Result<(), String> {
 #[tauri::command]
 async fn restart(state: State<'_, AppState>) -> Result<(), String> {
     if let Some(engine) = state.engine() {
-        engine.seek(std::time::Duration::ZERO);
-        engine.resume();
+        play_position(&engine, std::time::Duration::ZERO, true);
     }
     Ok(())
 }
@@ -289,15 +366,18 @@ async fn seek(
 ) -> Result<(), String> {
     if let Some(engine) = state.engine() {
         let position = match (seconds, fraction) {
-            (Some(s), _) => std::time::Duration::from_secs_f64(s),
-            (None, Some(f)) => engine
+            (Some(s), _) if s.is_finite() && s >= 0.0 => {
+                std::time::Duration::from_secs_f64(s)
+            }
+            (None, Some(f)) if f.is_finite() => engine
                 .snapshot()
                 .transport
-                .map(|t| t.duration().mul_f64(f))
+                .map(|t| t.duration().mul_f64(f.clamp(0.0, 1.0)))
                 .unwrap_or_default(),
             _ => return Ok(()),
         };
-        engine.seek(position);
+        tracing::info!(position_ms = position.as_millis() as u64, "seek requested");
+        play_position(&engine, position, false);
     }
     Ok(())
 }
@@ -312,8 +392,35 @@ async fn set_volume(state: State<'_, AppState>, volume: f32) -> Result<(), Strin
 
 #[tauri::command]
 async fn play_file(state: State<'_, AppState>, path: String) -> Result<(), String> {
+    let path = std::path::PathBuf::from(path);
+    let sidecar = std::fs::read_to_string(path.with_extension("json"))
+        .ok()
+        .and_then(|text| serde_json::from_str::<TrackDetail>(&text).ok());
+    let detail = sidecar.unwrap_or_else(|| TrackDetail {
+        id: path.display().to_string(),
+        cover: String::new(),
+        name: path
+            .file_stem()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "本地音频".into()),
+        player: "本地文件".into(),
+        album: String::new(),
+        download_url: String::new(),
+        size: human_bytes(path.metadata().map(|m| m.len()).unwrap_or(0)),
+        quality: "本地音频".into(),
+        format: path
+            .extension()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_default(),
+        lrc: None,
+    });
+
+    // A transport without metadata makes the UI think nothing is loaded and
+    // disables pause/seek even though audio is playing.
+    *state.current.lock().unwrap() = Some(detail);
+    *state.pending.lock().unwrap() = None;
     if let Some(engine) = state.engine() {
-        engine.play(std::path::PathBuf::from(path));
+        engine.play(path);
     }
     Ok(())
 }
@@ -575,12 +682,38 @@ fn human_bytes(bytes: u64) -> String {
 // --------------------------------------------------------------------- main
 
 fn main() {
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "twentyfourbit=info".into()),
-        )
-        .init();
+    // Write to a file as well as stdout: a Tauri app launched from Finder has no
+    // terminal, so a stalled transport would otherwise leave no trace at all.
+    let log_dir = std::path::PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| "/tmp".into()))
+        .join("Library/Logs/24bit");
+    let _ = std::fs::create_dir_all(&log_dir);
+
+    let file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(log_dir.join("app.log"))
+        .ok();
+
+    if let Some(file) = file {
+        let (non_blocking, _guard) = tracing_appender::non_blocking(file);
+        // Keep the guard alive for the process so the appender is not flushed and
+        // dropped on the way out of `main`.
+        std::mem::forget(_guard);
+        let _ = tracing_subscriber::fmt()
+            .with_env_filter(
+                tracing_subscriber::EnvFilter::try_from_default_env()
+                    .unwrap_or_else(|_| "twentyfourbit=info".into()),
+            )
+            .with_writer(non_blocking)
+            .try_init();
+    } else {
+        tracing_subscriber::fmt()
+            .with_env_filter(
+                tracing_subscriber::EnvFilter::try_from_default_env()
+                    .unwrap_or_else(|_| "twentyfourbit=info".into()),
+            )
+            .init();
+    }
 
     tauri::Builder::default()
         .setup(|app| {
@@ -634,6 +767,7 @@ fn main() {
                 }),
                 current: Mutex::new(None),
                 pending: Mutex::new(None),
+                last_seen: Mutex::new((0, String::new())),
                 quality: Mutex::new(cfg.quality),
             };
             app.manage(state);
@@ -649,52 +783,43 @@ fn main() {
             let handle = app.handle().clone();
             std::thread::spawn(move || {
                 let mut last_ready: Option<bool> = None;
+                let mut ticks: u64 = 0;
 
                 loop {
                     std::thread::sleep(std::time::Duration::from_millis(100));
 
                     let state = handle.state::<AppState>();
-                    let engine = state.engine();
-                    let ready = engine.is_some();
-
+                    let ready = state.engine().is_some();
                     if last_ready != Some(ready) {
                         last_ready = Some(ready);
                         tracing::info!(engine_ready = ready, "transport state publishing");
                     }
+                    let snapshot = player_snapshot(state.inner());
 
-                    let detail = state.current.lock().unwrap().clone();
-                    let pending = state.pending.lock().unwrap().clone();
+                    let emitted = handle.emit("player", snapshot.clone()).is_ok();
+                    if !emitted {
+                        tracing::warn!("no listener for player events");
+                    }
 
-                    let snapshot = match engine.as_ref().and_then(|e| e.snapshot().transport) {
-                        Some(t) => PlayerSnapshot {
-                            playing: t.phase() == twentyfourbit_player::Phase::Playing,
-                            position: t.position().as_millis() as u64,
-                            duration: t.duration().as_millis() as u64,
-                            title: detail.as_ref().map(|d| d.name.clone()),
-                            artist: detail.as_ref().map(|d| d.player.clone()),
-                            quality: detail.as_ref().map(|d| d.quality.clone()),
-                            cover: detail.as_ref().map(|d| d.cover.clone()),
-                            size: detail.as_ref().map(|d| d.size.clone()),
-                            album: detail.as_ref().map(|d| d.album.clone()),
-                            engine_ready: ready,
-                            pending: pending.clone(),
-                        },
-                        None => PlayerSnapshot {
-                            playing: false,
-                            position: 0,
-                            duration: 0,
-                            title: detail.as_ref().map(|d| d.name.clone()),
-                            artist: detail.as_ref().map(|d| d.player.clone()),
-                            quality: detail.as_ref().map(|d| d.quality.clone()),
-                            cover: detail.as_ref().map(|d| d.cover.clone()),
-                            size: detail.as_ref().map(|d| d.size.clone()),
-                            album: detail.as_ref().map(|d| d.album.clone()),
-                            engine_ready: ready,
-                            pending,
-                        },
+                    // Log changes, not every frame.
+                    let state = handle.state::<AppState>();
+                    let (phase, pos) = match snapshot.pending.is_some() {
+                        true => ("fetching".to_owned(), snapshot.pending.as_ref().map(|p| p.done).unwrap_or(0)),
+                        false => {
+                            let engine = state.engine();
+                            match engine.as_ref().and_then(|e| e.snapshot().transport) {
+                                Some(t) => (format!("{:?}", t.phase()), t.position().as_millis() as u64),
+                                None => ("none".to_owned(), 0),
+                            }
+                        }
                     };
-
-                    let _ = handle.emit("player", snapshot);
+                    let mut seen = state.last_seen.lock().unwrap();
+                    if seen.1 != phase || (pos != seen.0 && ticks % 10 == 0) {
+                        tracing::info!(phase, position = pos, "transport");
+                        seen.0 = pos;
+                        seen.1 = phase;
+                    }
+                    ticks += 1;
                 }
             });
 
@@ -702,8 +827,8 @@ fn main() {
         })
         .invoke_handler(tauri::generate_handler![
             search, search_page, charts, prepare, export, library, clear_cache, settings,
-            set_quality, toggle, pause, restart, seek, set_volume, play_file, login, whoami,
-            delete_track, reveal, mute
+            set_quality, get_player_snapshot, toggle, pause, restart, seek, set_volume, play_file,
+            login, whoami, delete_track, reveal, mute
         ])
         .run(tauri::generate_context!())
         .expect("error while running 24bit");

@@ -73,6 +73,40 @@ export const NextIcon = ({ size = 16 }: Props) => (
   </Svg>
 );
 
+export const SequentialIcon = ({ size = 16 }: Props) => (
+  <Svg size={size}>
+    <path d="M4 7h12M4 12h12M4 17h8" />
+    <path d="M16 15l4 2-4 2z" fill="currentColor" stroke="none" />
+  </Svg>
+);
+
+export const RepeatIcon = ({ size = 16 }: Props) => (
+  <Svg size={size}>
+    <path d="M17 4l3 3-3 3" />
+    <path d="M20 7H7a4 4 0 00-4 4v1" />
+    <path d="M7 20l-3-3 3-3" />
+    <path d="M4 17h13a4 4 0 004-4v-1" />
+  </Svg>
+);
+
+export const RepeatOneIcon = ({ size = 16 }: Props) => (
+  <Svg size={size}>
+    <path d="M17 4l3 3-3 3" />
+    <path d="M20 7H7a4 4 0 00-4 4v1" />
+    <path d="M7 20l-3-3 3-3" />
+    <path d="M4 17h13a4 4 0 004-4v-1" />
+    <path d="M12 9.5v5M10.5 10.5L12 9.5" strokeWidth={1.4} />
+  </Svg>
+);
+
+export const ShuffleIcon = ({ size = 16 }: Props) => (
+  <Svg size={size}>
+    <path d="M17 4l3 3-3 3M17 14l3 3-3 3" />
+    <path d="M3 7h2c5 0 6 10 11 10h4" />
+    <path d="M3 17h2c2.5 0 3.8-2.5 5.2-5M12.8 9.5C14 8 15 7 16 7h4" />
+  </Svg>
+);
+
 export const DownloadIcon = ({ size = 16 }: Props) => (
   <Svg size={size}>
     <path d="M12 5v10" />

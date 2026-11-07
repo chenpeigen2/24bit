@@ -9,6 +9,8 @@ interface Props {
   onPlay: () => void;
   onDownload: () => void;
   onSeek: (ms: number) => void;
+  upNext: SearchItem[];
+  onPick: (item: SearchItem) => void;
 }
 
 /**
@@ -25,8 +27,10 @@ export const Inspector = ({
   onPlay,
   onDownload,
   onSeek,
+  upNext,
+  onPick,
 }: Props) => {
-  const activeRef = useRef<HTMLDivElement | null>(null);
+  const activeRef = useRef<HTMLButtonElement | null>(null);
 
   const currentIndex = lyrics.findIndex(
     (line, i) =>
@@ -59,20 +63,38 @@ export const Inspector = ({
         </button>
       </div>
 
-      {lyrics.length > 0 && (
+      {lyrics.length > 0 ? (
         <div className="lyrics">
           {lyrics.map((line, i) => (
-            <div
+            <button
+              type="button"
               key={`${line.at}-${i}`}
               ref={i === currentIndex ? activeRef : undefined}
               className={i === currentIndex ? "is-current" : ""}
+              aria-current={i === currentIndex ? "true" : undefined}
               onClick={() => onSeek(line.at)}
             >
               {line.text}
-            </div>
+            </button>
           ))}
         </div>
-      )}
+      ) : upNext.length > 0 ? (
+        <div className="up-next">
+          <h3>接下来播放</h3>
+          {upNext.map((next) => (
+            <button type="button" key={next.id} onClick={() => onPick(next)}>
+              <span
+                className="up-next-art"
+                style={next.cover ? { backgroundImage: `url("${next.cover}")` } : undefined}
+              />
+              <span className="up-next-text">
+                <strong>{next.name}</strong>
+                <small>{next.player}</small>
+              </span>
+            </button>
+          ))}
+        </div>
+      ) : null}
     </aside>
   );
 };

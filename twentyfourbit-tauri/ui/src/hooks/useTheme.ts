@@ -1,45 +1,58 @@
 import { useCallback, useEffect, useState } from "react";
+import { refreshAccent } from "../lib/theme";
 
 export type Theme = "light" | "dark";
 
 const KEY = "24bit.theme";
 
+const systemTheme = (): Theme =>
+  window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+
+const forcedTheme = (): Theme | null => {
+  const forced = new URLSearchParams(location.search).get("theme");
+  return forced === "light" || forced === "dark" ? forced : null;
+};
+
 /**
  * Light or dark, following the system unless the user has chosen.
  *
- * The media query is the default rather than the only option because a music
- * app is often the one thing left open at night, and a white window at 2am is
- * hostile.
+ * A system-derived value is deliberately not persisted. Saving it on first
+ * paint would turn "follow system" into a permanent explicit preference.
  */
 export const useTheme = () => {
-  const [theme, setTheme] = useState<Theme>(() => {
-    // `?theme=` lets a headless render pick a theme for review, and lets a user
-    // force one without visiting settings.
-    const forced = new URLSearchParams(location.search).get("theme");
-    if (forced === "light" || forced === "dark") return forced;
+  const [theme, setThemeState] = useState<Theme>(() => {
+    const forced = forcedTheme();
+    if (forced) return forced;
     const saved = localStorage.getItem(KEY);
-    if (saved === "light" || saved === "dark") return saved;
-    return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+    return saved === "light" || saved === "dark" ? saved : systemTheme();
   });
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
-    localStorage.setItem(KEY, theme);
+    refreshAccent();
   }, [theme]);
 
-  // Follow the system while the user has made no explicit choice.
+  // Follow the system while the user has made no explicit choice. A `?theme=`
+  // review override takes precedence without becoming a saved preference.
   useEffect(() => {
     const mq = window.matchMedia("(prefers-color-scheme: dark)");
     const onChange = (e: MediaQueryListEvent) => {
-      if (!localStorage.getItem(KEY)) setTheme(e.matches ? "dark" : "light");
+      if (!localStorage.getItem(KEY) && !forcedTheme()) {
+        setThemeState(e.matches ? "dark" : "light");
+      }
     };
     mq.addEventListener("change", onChange);
     return () => mq.removeEventListener("change", onChange);
   }, []);
 
+  const setTheme = useCallback((next: Theme) => {
+    localStorage.setItem(KEY, next);
+    setThemeState(next);
+  }, []);
+
   const toggle = useCallback(() => {
-    setTheme((t) => {
-      const next = t === "dark" ? "light" : "dark";
+    setThemeState((current) => {
+      const next = current === "dark" ? "light" : "dark";
       localStorage.setItem(KEY, next);
       return next;
     });

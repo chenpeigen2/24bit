@@ -15,6 +15,8 @@ interface Props {
   lyrics: LyricLine[];
   position: number;
   onSeek: (ms: number) => void;
+  /** A chart entry supplies the first query without mutating the DOM behind React. */
+  initialQuery?: string;
 }
 
 /** Debounced search over both catalogues, with a two-pane result view. */
@@ -28,44 +30,92 @@ export const SearchPage = ({
   lyrics,
   position,
   onSeek,
+  initialQuery,
 }: Props) => {
   // In a plain browser the page opens pre-populated so the layout can be
   // reviewed without typing; the packaged app starts empty.
-  const [query, setQuery] = useState(demoSeed?.results[0] ? "富士山下" : "");
-  const [results, setResults] = useState<SearchItem[]>(demoSeed?.results ?? []);
+  const [query, setQuery] = useState(
+    initialQuery ?? (demoSeed?.results[0] ? "富士山下" : ""),
+  );
+  const [results, setResults] = useState<SearchItem[]>(
+    initialQuery ? [] : (demoSeed?.results ?? []),
+  );
   const [selected, setSelected] = useState(0);
-  const [searching, setSearching] = useState(false);
+  const [searching, setSearching] = useState(Boolean(initialQuery));
   const [hasMore, setHasMore] = useState(false);
   const [page, setPage] = useState(1);
   const [error, setError] = useState<string | null>(null);
 
   const timer = useRef<number | undefined>(undefined);
+  // Every new intent invalidates older requests. A network response is only
+  // allowed to render while it still belongs to the current query.
+  const request = useRef(0);
 
   const run = async (keyword: string) => {
-    if (!keyword) return;
+    const id = ++request.current;
+    if (!keyword) {
+      setSearching(false);
+      setError(null);
+      setResults([]);
+      setSelected(0);
+      setHasMore(false);
+      setPage(1);
+      return;
+    }
+
     setSearching(true);
     setError(null);
-    setResults([]);
-    setSelected(0);
-    setPage(1);
+    setHasMore(false);
     try {
       const found = await api.search(keyword);
+      if (id !== request.current) return;
       setResults(found);
+      setSelected(0);
+      setPage(1);
       setHasMore(found.length >= 30);
     } catch (e) {
+      if (id !== request.current) return;
+      setResults([]);
+      setSelected(0);
       setError(String(e));
       setHasMore(false);
     } finally {
-      setSearching(false);
+      if (id === request.current) setSearching(false);
     }
   };
 
-  useEffect(() => () => window.clearTimeout(timer.current), []);
+  // This component is keyed by the chart query in App. StrictMode may run the
+  // effect twice in development; the request generation keeps the first result
+  // from winning, and cleanup also prevents updates after unmount.
+  useEffect(() => {
+    if (initialQuery?.trim()) void run(initialQuery.trim());
+    return () => {
+      request.current += 1;
+      window.clearTimeout(timer.current);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const clear = () => {
+    request.current += 1;
+    window.clearTimeout(timer.current);
+    setQuery("");
+    setResults([]);
+    setSelected(0);
+    setSearching(false);
+    setHasMore(false);
+    setPage(1);
+    setError(null);
+  };
 
   const loadMore = async () => {
+    if (searching) return;
+    const id = ++request.current;
     setSearching(true);
+    setError(null);
     try {
       const next = await api.searchPage(query, page + 1);
+      if (id !== request.current) return;
       // The two catalogues overlap between pages, so de-duplicate on the pair
       // the site itself treats as identity.
       const seen = new Set(results.map((r) => `${r.name}\u0000${r.player}`));
@@ -81,16 +131,17 @@ export const SearchPage = ({
       setPage((p) => p + 1);
       setHasMore(next.length >= 30);
     } catch (e) {
-      setError(String(e));
+      if (id === request.current) setError(String(e));
     } finally {
-      setSearching(false);
+      if (id === request.current) setSearching(false);
     }
   };
 
   const current = results[selected];
-
-  // In a plain browser the input needs an id so a reviewer can drive it.
-  const inputId = "q";
+  const upNext = [
+    ...results.slice(selected + 1),
+    ...results.slice(0, Math.max(0, selected)),
+  ].slice(0, 3);
 
   return (
     <section className="page">
@@ -103,16 +154,24 @@ export const SearchPage = ({
         <div className="field">
           <SearchIcon size={14} />
           <input
-            id={inputId}
+            id="q"
+            aria-label="搜索歌曲或歌手"
+            autoFocus={Boolean(initialQuery)}
             value={query}
             placeholder="歌曲 / 歌手"
             spellCheck={false}
             onChange={(e) => {
               const value = e.target.value;
-              setQuery(value);
+              request.current += 1;
               window.clearTimeout(timer.current);
+              setQuery(value);
+              setError(null);
+              setSearching(false);
               if (!value.trim()) {
                 setResults([]);
+                setSelected(0);
+                setHasMore(false);
+                setPage(1);
                 return;
               }
               timer.current = window.setTimeout(() => void run(value.trim()), 320);
@@ -123,19 +182,23 @@ export const SearchPage = ({
                 void run(query.trim());
               }
               if (e.key === "Escape") {
-                setQuery("");
-                setResults([]);
+                clear();
                 e.currentTarget.blur();
               }
             }}
           />
+          {query && (
+            <button className="field-clear" type="button" aria-label="清空搜索" onClick={clear}>
+              ×
+            </button>
+          )}
         </div>
       </div>
 
       <div className="split">
         <div className="list-wrap">
-          <div className="list-meta">
-            {results.length > 0 && `${results.length} 个结果`}
+          <div className="list-meta" aria-live="polite">
+            {searching ? "正在搜索…" : results.length > 0 ? `${results.length} 个结果` : ""}
           </div>
 
           {results.length === 0 ? (
@@ -144,18 +207,29 @@ export const SearchPage = ({
                 <SearchIcon size={21} />
               </div>
               <h2>
-                {searching ? "正在搜索…" : query ? "没有找到匹配的歌曲" : error ? "搜索失败" : "输入关键词开始搜索"}
+                {searching
+                  ? "正在搜索…"
+                  : error
+                    ? "搜索失败"
+                    : query
+                      ? "没有找到匹配的歌曲"
+                      : "输入关键词开始搜索"}
               </h2>
               <p>
                 {searching
-                  ? ""
-                  : query
-                    ? "换个写法试试，或者直接浏览本周榜单"
-                    : "试试歌名或歌手，例如「富士山下」「陈奕迅」"}
+                  ? "正在合并两个曲库的结果"
+                  : error
+                    ? error
+                    : query
+                      ? "换个写法试试，或者直接浏览本周榜单"
+                      : "试试歌名或歌手，例如「富士山下」「陈奕迅」"}
               </p>
               {!searching && (
-                <button className="pill" onClick={onShowCharts}>
-                  浏览本周榜单
+                <button
+                  className="pill"
+                  onClick={error ? () => void run(query.trim()) : onShowCharts}
+                >
+                  {error ? "重试" : "浏览本周榜单"}
                 </button>
               )}
             </div>
@@ -192,6 +266,11 @@ export const SearchPage = ({
             onPlay={() => onPlay(current, results)}
             onDownload={() => onDownload(current)}
             onSeek={onSeek}
+            upNext={upNext}
+            onPick={(item) => {
+              const index = results.findIndex((result) => result.id === item.id);
+              if (index >= 0) setSelected(index);
+            }}
           />
         )}
       </div>
@@ -234,6 +313,7 @@ const Row = ({
   >
     <div
       className="row-art"
+      aria-hidden="true"
       style={item.cover ? { backgroundImage: `url("${item.cover}")` } : undefined}
     />
     <div className="row-text">
@@ -247,10 +327,12 @@ const Row = ({
         <ProgressRing fraction={progress} />
       ) : (
         <button
+          type="button"
           className={`icon-btn${playing ? "" : " solid"}`}
           title={playing ? "暂停" : "播放"}
           onClick={(e) => {
             e.stopPropagation();
+            onSelect();
             onPlay();
           }}
         >
@@ -258,8 +340,10 @@ const Row = ({
         </button>
       )}
       <button
+        type="button"
         className="icon-btn"
         title="下载到本地"
+        disabled={pending}
         onClick={(e) => {
           e.stopPropagation();
           onDownload();

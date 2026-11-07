@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Version to publish (e.g. v0.1.0). Required for a manual run."
+        description: "Version to publish (e.g. v1.0.0). Required for a manual run."
         required: false
 
 permissions:
@@ -16,8 +16,9 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
-  BIN: 24bit-gui
+  BIN: 24bit
   APP: 24bit
+  CRATE: twentyfourbit-tauri
 
 jobs:
   # Fail fast: a release with a broken test suite is worse than no release.
@@ -47,30 +48,30 @@ jobs:
         env: { LIBGL_ALWAYS_SOFTWARE: "1" }
         run: cargo test -p twentyfourbit-player --no-fail-fast
 
-      - name: Test gui
-        id: gui
+      - name: Test tauri
+        id: tauri
         continue-on-error: true
         env: { LIBGL_ALWAYS_SOFTWARE: "1" }
-        run: cargo test -p twentyfourbit-gui --no-fail-fast 2>&1 | tee /tmp/gui.log
+        run: cargo test -p twentyfourbit-tauri --no-fail-fast 2>&1 | tee /tmp/tauri.log
 
       # Job logs need a token to download, so a failure on a platform I cannot
       # reproduce locally is otherwise invisible. Publish the log to a branch
       # instead: it is readable, and it costs one push.
       - name: Publish failure log
-        if: steps.gui.outcome == 'failure'
+        if: steps.tauri.outcome == 'failure'
         run: |
           mkdir -p ci-logs
-          tail -c 200000 /tmp/gui.log > ci-logs/gui.log
+          tail -c 200000 /tmp/tauri.log > ci-logs/tauri.log
           git config user.name "ci"
           git config user.email "ci@localhost"
           git checkout -B ci-logs
-          git add ci-logs/gui.log
-          git commit -m "ci: gui test log" || true
+          git add ci-logs/tauri.log
+          git commit -m "ci: tauri test log" || true
           git push -f origin ci-logs
           echo "log published to the ci-logs branch"
 
-      - name: Fail if gui tests failed
-        if: steps.gui.outcome == 'failure'
+      - name: Fail if tauri tests failed
+        if: steps.tauri.outcome == 'failure'
         run: exit 1
 
       - name: Test cli
@@ -119,8 +120,16 @@ jobs:
             libxi-dev libxrandr-dev libxinerama-dev libgl1-mesa-dev \
             rpm dpkg-dev
 
+      # Tauri embeds the frontend at compile time via tauri-build, so the UI
+      # must be built before the Rust crate.
+      - name: Build frontend
+        run: |
+          cd twentyfourbit-tauri/ui
+          npm ci
+          npm run build
+
       - name: Build
-        run: cargo build --release --target ${{ matrix.target }} -p twentyfourbit-gui
+        run: cargo build --release --target ${{ matrix.target }} -p ${{ env.CRATE }}
 
       # ---------------------------------------------------------------- macOS
       - name: Package (macOS)
@@ -135,7 +144,7 @@ jobs:
           rm -rf dist "$APP_DIR"
           mkdir -p "$APP_DIR/Contents/MacOS" "$APP_DIR/Contents/Resources" dist
           cp "target/${{ matrix.target }}/release/$BIN" "$APP_DIR/Contents/MacOS/$APP"
-          cp assets/icon.icns "$APP_DIR/Contents/Resources/icon.icns"
+          cp twentyfourbit-tauri/icons/icon.icns "$APP_DIR/Contents/Resources/icon.icns"
           cat > "$APP_DIR/Contents/Info.plist" <<PLIST
           <?xml version="1.0" encoding="UTF-8"?>
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -181,7 +190,7 @@ jobs:
                      "$root/usr/share/doc/24bit"
             install -m755 "$BIN_PATH" "$root/usr/bin/24bit"
             install -m644 packaging/24bit.desktop "$root/usr/share/applications/24bit.desktop"
-            install -m644 assets/icon.png "$root/usr/share/icons/hicolor/512x512/apps/24bit.png"
+            install -m644 twentyfourbit-tauri/icons/icon.png "$root/usr/share/icons/hicolor/512x512/apps/24bit.png"
           }
 
           # --- .deb
@@ -223,7 +232,7 @@ jobs:
                    %{buildroot}/usr/share/icons/hicolor/512x512/apps
           install -m755 $PWD/$BIN_PATH %{buildroot}/usr/bin/24bit
           install -m644 $PWD/packaging/24bit.desktop %{buildroot}/usr/share/applications/24bit.desktop
-          install -m644 $PWD/assets/icon.png %{buildroot}/usr/share/icons/hicolor/512x512/apps/24bit.png
+          install -m644 $PWD/twentyfourbit-tauri/icons/icon.png %{buildroot}/usr/share/icons/hicolor/512x512/apps/24bit.png
           %files
           /usr/bin/24bit
           /usr/share/applications/24bit.desktop
@@ -235,7 +244,7 @@ jobs:
           # --- AppImage
           APPDIR="$WORK/24bit.AppDir"
           stage "$APPDIR"
-          cp assets/icon.png "$APPDIR/24bit.png"
+          cp twentyfourbit-tauri/icons/icon.png "$APPDIR/24bit.png"
           cp packaging/24bit.desktop "$APPDIR/24bit.desktop"
           cat > "$APPDIR/AppRun" <<'APPRUN'
           #!/bin/sh
@@ -264,7 +273,7 @@ jobs:
           New-Item -ItemType Directory -Force -Path $stage | Out-Null
           New-Item -ItemType Directory -Force -Path dist | Out-Null
           Copy-Item "target\${{ matrix.target }}\release\$env:BIN.exe" "$stage\24bit.exe"
-          Copy-Item "assets\icon.png" "$stage\icon.png"
+          Copy-Item "twentyfourbit-tauri\icons\icon.png" "$stage\icon.png"
           Copy-Item "README.md" "$stage\README.md"
           Compress-Archive -Path $stage -DestinationPath "dist\24bit-${{ matrix.name }}-$version.zip" -Force
 

@@ -7,21 +7,21 @@
 | `twentyfourbit-core` | HTTP API 客户端：搜索、详情、下载（断点续传）、周榜、登录、LRU 缓存、配置 |
 | `twentyfourbit-player` | 音频引擎：symphonia 解码 → rubato 窗函数 sinc 重采样 → cpal 输出，支持暂停/seek/音量 |
 | `twentyfourbit-cli` | 命令行工具，二进制名 `24bit` |
-| `twentyfourbit-gui` | 桌面客户端，二进制名 `24bit-gui`（egui/eframe） |
+| `twentyfourbit-tauri` | 桌面客户端，二进制名 `24bit`（Tauri + React） |
 
 ## 快速开始
 
 ```sh
 cargo build --release
 
-./target/release/24bit-gui                       # 桌面客户端
+./target/release/24bit                            # 桌面客户端
 ./target/release/24bit search 富士山下            # 命令行
 ```
 
 macOS 打包成可双击的 `.app`：
 
 ```sh
-./scripts/bundle-macos.sh     # 产出 dist/24bit.app
+./scripts/build-app.sh        # 产出 dist/24bit.app
 ```
 
 ## 桌面客户端
@@ -131,7 +131,7 @@ cargo test        # 143 个测试，默认全部离线
 真站集成测试（需联网，默认忽略）：
 
 ```sh
-cargo test -p twentyfourbit-gui --test live -- --ignored --nocapture --test-threads=1
+cargo test -p twentyfourbit-tauri --test live -- --ignored --nocapture --test-threads=1
 ```
 
 它们验证逆向出的 API 仍然成立：搜索返回 48 条、周榜 10 首、签名直链可 Range 读取、

@@ -2161,11 +2161,17 @@ impl App {
 
         egui::CentralPanel::default()
             .frame(egui::Frame::NONE)
-            .show(ui, |ui| match self.page {
+            .show(ui, |ui| {
+                // The content plane is a scrim, not a hole: with the blurred
+                // backdrop behind it, untextured areas would put body text
+                // straight onto whatever wallpaper is on screen.
+                ui.painter().rect_filled(ui.max_rect(), 0.0, bg());
+                match self.page {
                 Page::Search => self.search_page(ui),
                 Page::Charts => self.charts_page(ui),
                 Page::Library => self.library_page(ui),
                 Page::Settings => self.settings_page(ui),
+                }
             });
     }
 }

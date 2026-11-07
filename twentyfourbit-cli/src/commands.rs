@@ -75,10 +75,7 @@ pub fn run(cli: &Cli) -> Result<()> {
         Command::Play { id, quality, keep } => {
             let rt = tokio::runtime::Runtime::new().context("cannot start async runtime")?;
             let client = build_client(cli, &cfg)?;
-            let detail = rt
-                .block_on(client.track(id, (*quality).into()))
-                .with_context(|| format!("fetching track {id} failed"))?;
-            play_one(&rt, &client, &detail, *keep, cli.json)
+            play_one(&rt, &client, id, (*quality).into(), *keep, cli.json)
         }
 
         Command::Login { account, password } => {
@@ -234,56 +231,53 @@ fn download_one(
 fn play_one(
     rt: &tokio::runtime::Runtime,
     client: &Client,
-    detail: &twentyfourbit_core::TrackDetail,
+    id: &str,
+    quality: twentyfourbit_core::Quality,
     keep: bool,
     as_json: bool,
 ) -> Result<()> {
-    let target = std::env::temp_dir().join(detail.suggested_filename());
+    // Playing goes through the cache: a master-tier track is ~150MB, so a
+    // second play must not re-download it.
+    let cache = twentyfourbit_core::Cache::default_cache();
 
     let bar = if as_json {
         None
     } else {
         Some(indicatif::ProgressBar::new_spinner())
     };
+
+    let (path, detail) = rt
+        .block_on(client.fetch_cached(id, quality, &cache))
+        .with_context(|| format!("fetching track {id} failed"))?;
+
     if let Some(bar) = &bar {
-        bar.set_message(format!("fetching {}", detail.name));
-    }
-
-    rt.block_on(client.download_to_with_progress(&detail.download_url, &target, {
-        let bar = bar.clone();
-        move |done, total| {
-            if let Some(bar) = &bar {
-                if let Some(total) = total.filter(|t| *t > 0) {
-                    bar.set_length(total);
-                    bar.set_position(done);
-                } else {
-                    bar.set_position(done);
-                }
-            }
-        }
-    }))
-    .with_context(|| format!("downloading {}", detail.name))?;
-
-    if let Some(bar) = bar {
         bar.finish_and_clear();
     }
 
     if !as_json {
         println!("Playing {} — {}", detail.name, detail.player);
+        println!("  {}", detail.quality);
+        println!("  {}", path.display());
     }
 
-    twentyfourbit_player::play_file(&target).with_context(|| format!("playing {}", target.display()))?;
+    twentyfourbit_player::play_file(&path)
+        .map_err(|e| anyhow::anyhow!("{e}"))
+        .with_context(|| format!("playing {}", path.display()))?;
 
     if keep {
         if !as_json {
-            println!("Kept file at {}", target.display());
+            println!("Kept file at {}", path.display());
         }
     } else {
-        let _ = std::fs::remove_file(&target);
+        // The cache owns the file; deleting it here would defeat the cache.
+        // `--keep` simply reports where it lives.
     }
 
     if as_json {
-        println!("{}", serde_json::json!({ "status": "ok", "played": detail.name }));
+        println!(
+            "{}",
+            serde_json::json!({ "status": "ok", "played": detail.name, "path": path.display().to_string() })
+        );
     }
     Ok(())
 }

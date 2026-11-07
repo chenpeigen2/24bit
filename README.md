@@ -1,106 +1,135 @@
-# twentyfourbit
+# 24bit
 
-非官方的 [24bit.net](https://www.24bit.net)（Hi-Res 无损音乐直链下载站）Rust 客户端。三个 crate 组成的 workspace：
+非官方的 [24bit.net](https://www.24bit.net)（Hi-Res 无损音乐直链站）客户端。**全部 Rust**，四个 crate：
 
 | crate | 作用 |
 |-------|------|
-| `twentyfourbit-core` | HTTP API 客户端：搜索、详情、下载（支持断点续传）、周榜、登录、配置 |
-| `twentyfourbit-player` | 音频播放：symphonia 解码 → 采样率规划/重采样 → cpal 输出 |
+| `twentyfourbit-core` | HTTP API 客户端：搜索、详情、下载（断点续传）、周榜、登录、LRU 缓存、配置 |
+| `twentyfourbit-player` | 音频引擎：symphonia 解码 → rubato 窗函数 sinc 重采样 → cpal 输出，支持暂停/seek/音量 |
 | `twentyfourbit-cli` | 命令行工具，二进制名 `24bit` |
+| `twentyfourbit-gui` | 桌面客户端，二进制名 `24bit-gui`（egui/eframe） |
 
-## 安装 / 构建
+## 快速开始
 
 ```sh
 cargo build --release
-# 二进制在 target/release/24bit
+
+./target/release/24bit-gui                       # 桌面客户端
+./target/release/24bit search 富士山下            # 命令行
 ```
 
-## CLI 用法
+macOS 打包成可双击的 `.app`：
 
 ```sh
-# 搜索（自动合并两个曲库并去重）
-24bit search 富士山下
+./scripts/bundle-macos.sh     # 产出 dist/24bit.app
+```
+
+## 桌面客户端
+
+单窗口三栏布局：左侧导航（搜索 / 榜单 / 音乐库 / 设置），中间列表，底部固定播放条。
+
+- **搜索**：自动合并站点两个独立曲库并按 `(歌名, 歌手)` 去重
+- **播放**：双击或点「播放」，音频在后台线程解码 → 重采样 → 输出；播放条可暂停、拖动 seek、调音量
+- **榜单**：周歌曲榜与歌手榜，点歌名直接搜
+- **音乐库**：已缓存曲目，显示真实歌名（来自缓存侧车元数据），可离线播放
+- **设置**：音质偏好、缓存占用、清空缓存、登录
+
+界面全中文，字体从系统字体库自动探测（见下文「中文字体」）。
+
+## 命令行
+
+```sh
+24bit search 富士山下            # 搜索
 24bit search 周杰伦 --limit 5 --json
-
-# 周榜
-24bit charts
-
-# 查看曲目详情（含签名下载直链及其过期时间）
-24bit track c48ed2182ee4c5554d1def46d1aacbc8
-
-# 下载（默认至臻母带 24bit/192kHz FLAC）
-24bit download c48ed2182ee4c5554d1def46d1aacbc8 -o ~/Music/foo.flac
-24bit download <id> --quality surround   # 高清环绕声，文件更小
-
-# 播放（自动重采样到设备支持的最高采样率）
-24bit play <id>
-24bit play <id> --keep   # 播放后保留临时文件
-
-# 登录（可选；游客每天可下载数首）
-24bit login <account> --password <password>
-24bit login <account>   # 从 TWENTYFOURBIT_PASSWORD 环境变量读取
-
-# 配置
-24bit config show
-24bit config set-quality surround
-24bit config path
+24bit charts                     # 周榜
+24bit track <id>                 # 详情（含签名直链及过期时间）
+24bit download <id> -o out.flac  # 下载
+24bit download <id> --quality surround
+24bit play <id>                  # 播放（走缓存，二次播放零流量）
+24bit login <account> --password <pw>
+24bit config show | set-quality | path
 ```
 
-配置文件在 `~/.config/twentyfourbit/config.toml`：
+## 缓存
 
-```toml
-quality = "master"        # 或 "surround"
-token = "..."             # 登录后自动写入
-ip_placeholder = "0.0.0.0"
-# download_dir = "/Users/you/Music/24bit"
+母带一首约 150MB，重复下载不可接受。缓存默认在 `~/Library/Caches/24bit`（Linux 为 `~/.cache/24bit`）：
+
+```
+master/<track-id>.flac      音频
+master/<track-id>.json      元数据侧车（歌名/歌手/音质/歌词）
+master/<track-id>.flac.part 未完成的下载
 ```
 
-## 库用法
+- **二次播放零网络请求**，连歌名都不用再查
+- 按 `id + 音质档` 分键：母带与环绕声互不覆盖
+- 超预算按 **LRU 淘汰**，且「命中即续命」——刚播过的不会被删
+- `.part` 永不淘汰（不能为了腾地方毁掉下了一半的 150MB）
+- 0 字节文件视为未缓存（崩溃不会留下「已缓存」的空文件）
+- id 会被净化，恶意 id 无法逃出缓存目录
 
-```rust,ignore
-use twentyfourbit_core::{Client, Quality};
+上限默认 5GB。
 
-let client = Client::new()?;
-let hits = client.search("富士山下").await?;
-let d = client.track(&hits[0].id, Quality::Master).await?;
-client.download_to(&d.download_url, "out.flac".as_ref()).await?;
-```
+## 播放质量
+
+站点母带是 24bit/192kHz，绝大多数输出设备不接受。播放器在打开硬件**之前**先算出输出采样率：
+
+- 设备支持原生采样率 → 直通
+- 不支持 → **rubato 窗函数 sinc 重采样**（256 taps, Blackman-Harris2）
+
+实测（`tests/resampler.rs`，用正弦波频率作为独立真值）：
+
+| 输入 | 结果 |
+|------|------|
+| 1kHz @192k → 48k | 输出 1001Hz（误差 0.13%） |
+| 440Hz @44.1k → 192k | 输出 440.5Hz |
+| 30kHz @192k → 48k | 残余峰值 0.0000（完全滤除） |
+
+最后一行是关键：旧的箱式滤波会把 30kHz 折叠成 18kHz 的全幅假信号，sinc 直接滤掉。
 
 ## 站点 API（逆向所得，无官方文档）
 
-全部端点：`POST https://www.24bit.net/api/<path>`，JSON body，响应为
-`{"status": bool, "result": ...}`。
+全部端点：`POST https://www.24bit.net/api/<path>`，JSON body，响应 `{"status": bool, "result": ...}`。
 
 | 端点 | body | 说明 |
 |------|------|------|
 | `/player/searchOnlineMusicOne` | `{keyword, page}` | 曲库一，30 条/页 |
 | `/player/searchOnlineMusicTwo` | `{keyword, page}` | 曲库二（与一不同） |
-| `/music/findMusicPage` | `{type, id, ip}` | 详情+签名直链；`type` 为 `a`(母带)/`c`(环绕声)；`ip` 必填但值不校验 |
-| `/player/findWeekRecord` | `{}` | 周榜（musics + players） |
+| `/music/findMusicPage` | `{type, id, ip}` | 详情 + 签名直链；`type` = `a`(母带)/`c`(环绕声)；`ip` 必填但值不校验 |
+| `/player/findWeekRecord` | `{}` | 周榜 |
 | `/user/login` | `{account, password}` | 返回 token，放 `Token` header |
 | `/user/getUserStatus` | — | 随 `Token` header 查询 |
 | `/music/getTodayMusicCount` | — | 今日已下载次数 |
 
-下载直链指向 `iot*.music.126.net`，路径中带 `YYYYMMDDhhmmss` 过期戳，
-过期后返回 403（`Error::ExpiredLink`，重新取详情即可）。支持 Range 续传。
+下载直链指向 `iot*.music.126.net`，路径里带 `YYYYMMDDhhmmss` 过期戳，过期返回 403。支持 Range 续传。游客即可搜索、取直链、下载。
 
-**已知的坑（本 crate 已处理）：**
+**已处理的坑：**
 
-1. CDN 把 FLAC 标成 `audio/mpeg` —— 扩展名必须取自 `format` 字段。
-2. `findMusicPage` 强制要求 `ip` 字段，但值随便填。
-3. 站点会间歇性重置连接 —— 客户端默认重试 3 次（5xx/429/网络错误才重试，`status:false` 的业务拒绝不重试）。
-4. `searchOnlineMusicThree` 已失效（超时），不要用。
-5. 母带档 `type=b` 服务端 500，同样不要用。
+1. CDN 把 FLAC 标成 `audio/mpeg` —— 扩展名取自 `format` 字段，不看 Content-Type。
+2. `findMusicPage` 强制要求 `ip` 字段，值随便填。
+3. 站点会间歇性重置连接 —— 默认重试 3 次，但只对网络错误/5xx/429 重试；`status:false` 是业务答复，重试没意义。
+4. 签名直链过期 → 自动重取详情重试**一次**（这是唯一保证有效的重试）。
+5. `searchOnlineMusicThree` 已失效（超时），母带档 `type=b` 服务端 500 —— 都不建模。
+
+## 中文字体
+
+egui 只自带拉丁字体，不处理会满屏豆腐块。程序在系统字体库里按优先级查找：
+PingFang → Hiragino Sans GB → Microsoft YaHei → Noto Sans CJK → 思源黑体 → …，
+并正确使用 `.ttc` 集合内的 face index。找不到时界面会明确提示，而不是静默画方块。
 
 ## 测试
 
 ```sh
-cargo test          # 46 个测试，全部离线（wiremock + 真实响应 fixtures）
+cargo test        # 115 个测试
 ```
 
-测试期望值全部来自抓取的真实服务器响应（`twentyfourbit-core/tests/fixtures/`），
-不与实现互为真值。播放器的时序测试需要声卡（CI 无声卡环境会跳过失败）。
+大部分测试离线运行（wiremock + 抓取的真实响应 fixtures），期望值来自真实服务器响应而非实现本身。
+
+少数测试驱动真实音频硬件并断言**时序**——2 秒音频必须花约 2 秒播完。这类测试在无声卡环境会失败，这是刻意的：把播放路径换成非实时实现，它们必须报警。
 
 ## License
 
 MIT OR Apache-2.0
+
+---
+
+非官方客户端，与 24bit.net 无关联。站点靠会员费运营（游客每天限数首），请自行判断使用边界。

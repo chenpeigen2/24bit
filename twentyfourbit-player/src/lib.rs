@@ -13,7 +13,10 @@
 
 pub mod engine;
 pub mod plan;
-pub mod testing;
+pub mod resampler;
+pub mod ring;
+pub mod state;
 
-pub use engine::{play_file, PlayError};
+pub use engine::{play_file, Command, Engine, EngineError, Snapshot};
 pub use plan::{PlaybackPlan, ResampleMode, SAFE_DEFAULT_RATE};
+pub use state::{Phase, Transport};

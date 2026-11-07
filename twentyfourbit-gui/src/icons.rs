@@ -326,9 +326,10 @@ pub fn seek_bar(ui: &mut Ui, value: f32, height: f32) -> (Response, Option<f32>)
     let (rect, response) = ui.allocate_exact_size(Vec2::new(width, height), Sense::click_and_drag());
     let painter = ui.painter();
 
+    let half = if response.hovered() || response.dragged() { 2.0 } else { 1.5 };
     let track = Rect::from_min_max(
-        Pos2::new(rect.left(), rect.center().y - 2.0),
-        Pos2::new(rect.right(), rect.center().y + 2.0),
+        Pos2::new(rect.left(), rect.center().y - half),
+        Pos2::new(rect.right(), rect.center().y + half),
     );
     let base = if response.hovered() {
         crate::theme::TEXT_FAINT

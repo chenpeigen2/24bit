@@ -87,12 +87,13 @@ pub const TRANSPORT_H: f32 = 96.0;
 /// Status strip height.
 pub const STATUS_H: f32 = 26.0;
 
-// ------------------------------------------------------- translucent mode
+// --------------------------------------------------------- floating shell
 //
-// When the window has a blurred backdrop behind it, surfaces become
-// semi-transparent so the blur reads through. The content plane stays nearly
-// opaque: text over a strong blur is tiring, and Apple's own apps keep document
-// views solid while the chrome floats.
+// With vibrancy the window itself is frosted glass, and the interface floats on
+// top of it as one solid, rounded surface inset from the window edge. Surfaces
+// inside the shell stay fully opaque: text over a blur is unreadable, and a
+// translucent chrome layer only makes the whole window look washed out. The
+// glass is the *margin* you see around the shell.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -108,43 +109,38 @@ pub fn glass() -> bool {
     GLASS.load(Ordering::Relaxed)
 }
 
-/// The content plane.
+/// How far the floating shell is inset from the window edge; the blurred
+/// desktop shows in this margin.
+pub const SHELL_INSET: f32 = 14.0;
+/// Corner radius of the floating shell.
+pub const SHELL_RADIUS: f32 = 16.0;
+
+/// The floating surface that carries the whole interface.
+///
+/// Not fully opaque: a few percent of the backdrop keeps it feeling like glass
+/// rather than paper, while leaving text contrast essentially untouched.
+pub fn shell_color() -> Color32 {
+    Color32::from_rgba_unmultiplied(252, 252, 253, 247)
+}
+
+/// The content plane. Always opaque.
 pub fn bg() -> Color32 {
-    if glass() {
-        // 80% white: enough blur shows through to read as glass, and worst-case
-        // contrast for near-black body text stays around 8:1.
-        Color32::from_rgba_unmultiplied(255, 255, 255, 204)
-    } else {
-        BG
-    }
+    BG
 }
 
-/// Chrome: sidebar, header, transport.
+/// Chrome: sidebar, header, transport. Always opaque.
 pub fn panel() -> Color32 {
-    if glass() {
-        // Chrome is the part that is supposed to look like frosted glass.
-        Color32::from_rgba_unmultiplied(255, 255, 255, 118)
-    } else {
-        PANEL
-    }
+    PANEL
 }
 
-/// Inputs, rows and grouped containers.
+/// Inputs, rows and grouped containers. Always opaque.
 pub fn card() -> Color32 {
-    if glass() {
-        Color32::from_rgba_unmultiplied(255, 255, 255, 142)
-    } else {
-        CARD
-    }
+    CARD
 }
 
-/// Cards under the pointer.
+/// Cards under the pointer. Always opaque.
 pub fn card_hover() -> Color32 {
-    if glass() {
-        Color32::from_rgba_unmultiplied(255, 255, 255, 196)
-    } else {
-        CARD_HOVER
-    }
+    CARD_HOVER
 }
 
 /// A soft shadow, for the few surfaces that float above the page.
@@ -231,13 +227,41 @@ pub fn apply(ctx: &egui::Context) {
 /// Native windows are a flat fill; a gradient would read as decoration, so this
 /// exists only to guarantee no part of the window is left unpainted when a panel
 /// does not cover it.
-pub fn paint_backdrop(painter: &egui::Painter, rect: egui::Rect) {
-    if glass() {
-        // The blur lives behind the framebuffer; painting an opaque colour here
-        // would cover it.
-        return;
+/// Paint the window background.
+///
+/// Without vibrancy this is the whole window. With it, the window stays clear so
+/// the blurred backdrop shows, and what gets painted is the floating shell.
+/// Returns the rect the interface should be laid out in.
+pub fn paint_backdrop(painter: &egui::Painter, window: egui::Rect) -> egui::Rect {
+    if !glass() {
+        painter.rect_filled(window, 0.0, BG);
+        return window;
     }
-    painter.rect_filled(rect, 0.0, BG);
+
+    let shell = window.shrink(SHELL_INSET);
+
+    // Stacked translucent rects approximate a soft drop shadow. A shadow is what
+    // makes the shell read as floating above the glass rather than painted onto
+    // it, and egui has no blur primitive cheap enough for a per-frame backdrop.
+    for (i, alpha) in [(10.0, 5u8), (6.0, 7), (3.0, 9)] {
+        painter.rect_filled(
+            shell.translate(egui::vec2(0.0, 2.0)).expand(i),
+            SHELL_RADIUS + i,
+            Color32::from_black_alpha(alpha),
+        );
+    }
+
+    painter.rect_filled(shell, SHELL_RADIUS, shell_color());
+
+    // A hairline keeps the edge crisp on a light desktop.
+    painter.rect_stroke(
+        shell,
+        SHELL_RADIUS,
+        egui::Stroke::new(1.0, Color32::from_black_alpha(20)),
+        egui::StrokeKind::Inside,
+    );
+
+    shell
 }
 
 /// Install the fonts: SF (or the platform equivalent) for Latin, and a CJK face

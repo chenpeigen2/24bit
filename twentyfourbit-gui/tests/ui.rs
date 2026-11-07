@@ -204,6 +204,9 @@ fn lyrics_appear_in_the_panel() {
         let state = harness.state_mut();
         let app = state.as_mut().unwrap();
         app.adopt_track(detail_with_lyrics(), std::path::PathBuf::from("/nonexistent.flac"));
+        // The lyrics pane starts collapsed so the inspector can own the right
+        // edge; the user opens it explicitly.
+        app.set_lyrics_visible(true);
     }
     harness.run_steps(6);
 

@@ -147,23 +147,33 @@ fn surfaces_are_opaque_without_a_backdrop() {
     }
 }
 
-/// With vibrancy on, chrome is more translucent than the content plane, which
-/// stays readable.
+/// Vibrancy must not make the interface itself translucent.
+///
+/// The glass is the window margin; the interface floats above it on one solid
+/// surface. Tinting every panel with alpha is what made an earlier version look
+/// washed out and unreadable.
 #[test]
-fn glass_makes_chrome_translucent_but_keeps_content_readable() {
+fn glass_keeps_the_interface_opaque() {
     twentyfourbit_gui::theme::set_glass(true);
 
-    let panel = twentyfourbit_gui::theme::panel().a();
-    let content = twentyfourbit_gui::theme::bg().a();
+    for colour in [
+        twentyfourbit_gui::theme::bg(),
+        twentyfourbit_gui::theme::panel(),
+        twentyfourbit_gui::theme::card(),
+        twentyfourbit_gui::theme::card_hover(),
+    ] {
+        assert_eq!(
+            colour.a(),
+            255,
+            "surfaces inside the shell must stay opaque or text loses contrast"
+        );
+    }
 
-    assert!(panel < 160, "chrome should read as glass, got alpha {panel}");
+    // The shell itself is allowed a hint of transparency, but not much.
+    let shell = twentyfourbit_gui::theme::shell_color().a();
     assert!(
-        content >= 190,
-        "body text sits on the content plane and needs a real scrim, got alpha {content}"
-    );
-    assert!(
-        panel < content,
-        "chrome must be more translucent than content for the layering to read"
+        (235..255).contains(&shell),
+        "the floating shell should be near-opaque, got alpha {shell}"
     );
 
     twentyfourbit_gui::theme::set_glass(false);

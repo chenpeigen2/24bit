@@ -91,6 +91,8 @@ pub struct App {
     pending: Option<String>,
     /// The track the engine is currently playing, so its row can say so.
     playing_id: Option<String>,
+    /// The row the user is looking at, shown in the inspector pane.
+    selected: Option<usize>,
     /// A search is in flight. Until it lands, "no results" would be a lie.
     searching: bool,
     toast: crate::ui_state::Toast,
@@ -182,13 +184,14 @@ impl App {
             progress: None,
             pending: None,
             playing_id: None,
+            selected: None,
             searching: false,
             toast: crate::ui_state::Toast::new(),
             volume: crate::ui_state::Volume::new(),
             clear_confirm: crate::ui_state::Confirm::new(),
             now_playing: None,
             lyrics: crate::lyrics::Lyrics::default(),
-            show_lyrics: true,
+            show_lyrics: false,
             export_dir: default_export_dir(),
             cjk_font: cjk,
             glass: None,
@@ -221,6 +224,9 @@ impl App {
                     self.progress = None;
                 }
                 Event::Search(items) => {
+                    // Select the first row: an empty inspector pane makes the
+                    // page look broken even though the search worked.
+                    self.selected = (!items.is_empty()).then_some(0);
                     self.results = items;
                     self.busy = None;
                     self.searching = false;
@@ -278,7 +284,10 @@ impl App {
             .as_deref()
             .map(crate::lyrics::Lyrics::parse)
             .unwrap_or_default();
-        self.show_lyrics = !self.lyrics.is_empty();
+        // Only pop the lyrics pane when the user asks for it: the inspector is
+        // the default right-hand surface, and two panes competing for the same
+        // edge leaves the page with no focal point.
+
 
         self.covers.request(&detail.cover);
 
@@ -336,6 +345,11 @@ impl App {
     /// Number of search results currently held.
     pub fn result_count(&self) -> usize {
         self.results.len()
+    }
+
+    /// Show or hide the lyrics pane.
+    pub fn set_lyrics_visible(&mut self, visible: bool) {
+        self.show_lyrics = visible;
     }
 
     /// Lyrics currently loaded.
@@ -1222,20 +1236,43 @@ impl App {
         let mut to_prepare = None;
         let mut to_export = None;
 
+        // Two panes: the list, and a fixed inspector. Geometry is computed
+        // explicitly rather than by chaining layouts — a child `Ui` does not
+        // advance the parent's cursor, and relying on it put the inspector on
+        // top of the list.
+        let area = ui.available_rect_before_wrap();
+        let inspector_w = area.width().min(320.0);
+        let gap = GUTTER;
+        let list_w = (area.width() - inspector_w - gap).max(320.0);
+
+        let list_rect = Rect::from_min_size(area.min, Vec2::new(list_w, area.height()));
+        let inspector_rect = Rect::from_min_size(
+            Pos2::new(area.min.x + list_w + gap, area.min.y),
+            Vec2::new(inspector_w, area.height().min(area.height())),
+        );
+
+        let mut list_ui = ui.new_child(
+            egui::UiBuilder::new()
+                .max_rect(list_rect)
+                .layout(egui::Layout::top_down(egui::Align::Min)),
+        );
+
         egui::ScrollArea::vertical()
+            .id_salt("results")
             .auto_shrink([false, false])
-            .show(ui, |ui| {
+            .show(&mut list_ui, |ui| {
                 let items = std::mem::take(&mut self.results);
                 for (i, item) in items.iter().enumerate() {
-                    match self.result_row(ui, item, i) {
+                    match self.result_row(ui, item, i, self.selected == Some(i)) {
                         RowAction::Play => to_prepare = Some(item.id.clone()),
                         RowAction::Export => to_export = Some(item.id.clone()),
+                        RowAction::Select => self.selected = Some(i),
                         RowAction::None => {}
                     }
                     if i + 1 < items.len() {
                         let y = ui.cursor().top() - 1.0;
-                        let left = ui.cursor().left() + GUTTER + 76.0;
-                        let right = ui.cursor().left() + ui.available_width() - GUTTER;
+                        let left = ui.cursor().left() + 76.0;
+                        let right = ui.cursor().left() + ui.available_width();
                         ui.painter().rect_filled(
                             Rect::from_min_max(Pos2::new(left, y), Pos2::new(right, y + 1.0)),
                             0.0,
@@ -1246,6 +1283,29 @@ impl App {
                 self.results = items;
                 ui.add_space(GUTTER);
             });
+
+        ui.painter().rect_filled(
+            Rect::from_min_max(
+                Pos2::new(inspector_rect.left() - gap * 0.5, area.top()),
+                Pos2::new(inspector_rect.left() - gap * 0.5 + 1.0, area.bottom()),
+            ),
+            0.0,
+            BORDER,
+        );
+
+        let mut inspector_ui = ui.new_child(
+            egui::UiBuilder::new()
+                .max_rect(inspector_rect)
+                .layout(egui::Layout::top_down(egui::Align::Min)),
+        );
+        let picked = self.selected.and_then(|i| self.results.get(i)).cloned();
+        if let Some(item) = picked {
+            if self.inspector(&mut inspector_ui, &item) {
+                to_prepare = Some(item.id.clone());
+            }
+        }
+
+        ui.advance_cursor_after_rect(area);
 
         if let Some(id) = to_prepare {
             self.pending = Some(id.clone());
@@ -1260,7 +1320,112 @@ impl App {
         }
     }
 
-    fn result_row(&mut self, ui: &mut egui::Ui, item: &SearchItem, index: usize) -> RowAction {
+    /// The right-hand pane: what the selected track actually is, with artwork
+    /// large enough to give the page a focal point. Returns true when the user
+    /// asked to play it.
+    fn inspector(&mut self, ui: &mut egui::Ui, item: &SearchItem) -> bool {
+        let width = ui.available_width();
+
+        // Size the artwork from the room that is actually left, otherwise the
+        // actions below it get clipped by the transport bar on a short window.
+        let reserved = 190.0;
+        let art_side = width.min(196.0).min((ui.available_height() - reserved).max(88.0));
+
+        let art = Rect::from_min_size(ui.cursor().min, Vec2::splat(art_side));
+        self.draw_cover(ui, &item.cover, art);
+        ui.add_space(art.height() + 14.0);
+
+        ui.label(
+            egui::RichText::new(&item.name)
+                .size(17.0)
+                .strong()
+                .color(TEXT),
+        );
+        ui.add_space(2.0);
+        ui.label(
+            egui::RichText::new(&item.player)
+                .size(T_BODY)
+                .color(TEXT_MUTED),
+        );
+        ui.label(
+            egui::RichText::new(&item.album)
+                .size(T_META)
+                .color(TEXT_FAINT),
+        );
+
+        ui.add_space(14.0);
+
+        let play = Rect::from_min_size(ui.cursor().min, Vec2::new(width, 38.0));
+        let response = ui.interact(play, ui.scope_id().with("inspector-play"), Sense::click());
+        if response.hovered() {
+            ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+        }
+        icons::card(
+            &ui.painter().clone(),
+            play,
+            RADIUS_SM,
+            if response.hovered() { ACCENT_HOVER } else { ACCENT },
+            None,
+        );
+        let painter = ui.painter().clone();
+        icons::paint(
+            &painter,
+            Rect::from_center_size(
+                Pos2::new(play.left() + 30.0, play.center().y),
+                Vec2::splat(16.0),
+            ),
+            Icon::Play,
+            ON_ACCENT,
+        );
+        painter.text(
+            Pos2::new(play.left() + 44.0, play.center().y),
+            Align2::LEFT_CENTER,
+            format!("播放 · {}", quality_label(self.quality)),
+            FontId::proportional(T_BODY),
+            ON_ACCENT,
+        );
+        let _ = &painter;
+
+        ui.add_space(46.0);
+
+        let download = Rect::from_min_size(ui.cursor().min, Vec2::new(width, 34.0));
+        let dl = ui.interact(download, ui.scope_id().with("inspector-download"), Sense::click());
+        icons::card(
+            &ui.painter().clone(),
+            download,
+            RADIUS_SM,
+            if dl.hovered() { card_hover() } else { card() },
+            None,
+        );
+        let painter = ui.painter().clone();
+        icons::paint(
+            &painter,
+            Rect::from_center_size(
+                Pos2::new(download.left() + 30.0, download.center().y),
+                Vec2::splat(15.0),
+            ),
+            Icon::Download,
+            TEXT_MUTED,
+        );
+        painter.text(
+            Pos2::new(download.left() + 44.0, download.center().y),
+            Align2::LEFT_CENTER,
+            "下载到本地",
+            FontId::proportional(T_BODY),
+            TEXT,
+        );
+        ui.add_space(40.0);
+
+        response.clicked()
+    }
+
+    fn result_row(
+        &mut self,
+        ui: &mut egui::Ui,
+        item: &SearchItem,
+        index: usize,
+        selected: bool,
+    ) -> RowAction {
         let height = 66.0;
         let gutter = GUTTER;
         let (rect, _) = ui.allocate_exact_size(
@@ -1284,6 +1449,21 @@ impl App {
 
         let painter = ui.painter().clone();
         let is_playing = self.playing_id.as_deref() == Some(item.id.as_str());
+
+        let inflight = self.pending.as_deref() == Some(item.id.as_str());
+
+        if inflight {
+            // Painted here, with the other background states. Painting it after
+            // the text covered the row with its own highlight.
+            icons::card(&painter, rect, RADIUS, ACCENT_SOFT, None);
+        } else if selected && !is_playing {
+            painter.rect_stroke(
+                rect.shrink(1.0),
+                RADIUS,
+                Stroke::new(1.0, BORDER_STRONG),
+                egui::StrokeKind::Inside,
+            );
+        }
 
         if is_playing {
             icons::card(&painter, rect, RADIUS, ACCENT_SOFT, None);
@@ -1334,7 +1514,6 @@ impl App {
             Pos2::new(rect.right() - 26.0, rect.center().y),
             Vec2::splat(32.0),
         );
-        let inflight = self.pending.as_deref() == Some(item.id.as_str());
         let play = if inflight {
             let fraction = self
                 .progress
@@ -1354,10 +1533,7 @@ impl App {
             icons::button_at(ui, play_rect, Icon::Play, Style::Outline)
         };
 
-        // The whole row reads as busy, not just the button.
-        if inflight {
-            icons::card(ui.painter(), rect, RADIUS, ACCENT_SOFT, None);
-        }
+
 
         let download_rect = Rect::from_center_size(
             Pos2::new(rect.right() - 74.0, rect.center().y),
@@ -1371,7 +1547,7 @@ impl App {
         } else if download.clicked() {
             RowAction::Export
         } else if clicked {
-            RowAction::Play
+            RowAction::Select
         } else {
             RowAction::None
         }
@@ -1787,6 +1963,8 @@ enum RowAction {
     None,
     Play,
     Export,
+    /// Open the row in the inspector.
+    Select,
 }
 
 /// Announce hand-painted text to assistive technology.
@@ -2151,7 +2329,17 @@ impl App {
         // root ui starts below the window edge, which would leave a bare strip.
         self.debug_hooks(&ctx);
 
-        paint_backdrop(ui.painter(), ctx.viewport_rect());
+        let surface = paint_backdrop(ui.painter(), ctx.viewport_rect());
+
+        // Everything is laid out inside `surface`: with vibrancy that is the
+        // floating shell, otherwise the whole window.
+        let mut shell_ui = ui.new_child(
+            egui::UiBuilder::new()
+                .max_rect(surface)
+                .layout(egui::Layout::top_down(egui::Align::Min)),
+        );
+        shell_ui.shrink_clip_rect(surface);
+        let ui = &mut shell_ui;
 
         self.header(ui);
         self.status_bar(ui);
@@ -2173,5 +2361,13 @@ impl App {
                 Page::Settings => self.settings_page(ui),
                 }
             });
+    }
+}
+
+/// Human-readable name for a quality tier.
+fn quality_label(q: Quality) -> &'static str {
+    match q {
+        Quality::Master => "至臻母带",
+        Quality::Surround => "高清环绕声",
     }
 }

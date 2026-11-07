@@ -7,6 +7,7 @@
 pub mod app;
 pub mod backend;
 pub mod covers;
+pub mod debounce;
 pub mod fonts;
 pub mod format;
 pub mod lyrics;

@@ -15,6 +15,8 @@ fn main() -> eframe::Result<()> {
             .with_inner_size([1080.0, 720.0])
             .with_min_inner_size([820.0, 520.0])
             .with_title("24bit — Hi-Res 无损音乐"),
+        // Remember window size and position between launches.
+        persist_window: true,
         ..Default::default()
     };
 

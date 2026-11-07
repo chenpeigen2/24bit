@@ -13,7 +13,7 @@ path = "src/main.rs"
 [dependencies]
 twentyfourbit-core = { path = "../twentyfourbit-core" }
 twentyfourbit-player = { path = "../twentyfourbit-player" }
-eframe = { version = "0.37", default-features = false, features = ["glow", "default_fonts", "wayland", "x11"] }
+eframe = { version = "0.37", default-features = false, features = ["glow", "default_fonts", "persistence", "wayland", "x11"] }
 egui = "0.37"
 egui_extras = { version = "0.37", features = ["image"] }
 image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }

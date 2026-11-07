@@ -37,6 +37,7 @@ pub struct App {
     page: Page,
     query: String,
     last_query: String,
+    debounce: crate::debounce::Debounce,
     busy: Option<&'static str>,
 
     results: Vec<SearchItem>,
@@ -114,6 +115,7 @@ impl App {
             page: Page::Search,
             query: String::new(),
             last_query: String::new(),
+            debounce: crate::debounce::Debounce::new(0.3),
             busy: None,
             results: Vec::new(),
             charts: WeeklyCharts::default(),
@@ -609,12 +611,29 @@ impl App {
                     .hint_text("歌曲 / 歌手")
                     .desired_width(360.0),
             );
+            let now = ui.input(|i| i.time);
             let submitted =
                 response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
 
-            if ui.button("搜索").clicked() || submitted {
+            // Typing only arms the debounce; Enter or the button searches at once.
+            // The UI must keep repainting while the debounce is armed, otherwise
+            // the timer would only ever fire on the next input event.
+            if response.changed() {
+                self.debounce.note_edit(now);
+            }
+            if self.debounce.is_pending() {
+                ui.ctx().request_repaint_after(std::time::Duration::from_millis(50));
+            }
+            let due = self.debounce.poll(now);
+
+            let explicit = ui.button("搜索").clicked() || submitted;
+            if explicit {
+                self.debounce.cancel();
+            }
+
+            if explicit || due {
                 let q = self.query.trim().to_owned();
-                if !q.is_empty() {
+                if !q.is_empty() && q != self.last_query {
                     self.last_query = q.clone();
                     self.backend.send(Request::Search(q));
                 }

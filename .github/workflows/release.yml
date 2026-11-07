@@ -256,11 +256,32 @@ jobs:
           Copy-Item "README.md" "dist\24bit\README.md"
           Compress-Archive -Path dist\24bit -DestinationPath "dist\24bit-${{ matrix.name }}-$version.zip" -Force
 
-      - uses: actions/upload-artifact@v4
+      - name: List packages
+        run: ls -lR dist || true
+
+      - id: upload
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.name }}
-          path: dist/*.zip dist/*.deb dist/*.rpm dist/*.AppImage
+          path: dist/
           if-no-files-found: error
+
+      - name: Publish failure log
+        if: steps.upload.outcome == 'failure'
+        run: |
+          mkdir -p ci-logs
+          { echo "== ls -lR dist =="; ls -lR dist || true; } > ci-logs/build-${{ matrix.name }}.log
+          git config user.name "ci"
+          git config user.email "ci@localhost"
+          git checkout -B ci-logs
+          git add ci-logs
+          git commit -m "ci: ${{ matrix.name }} build log" || true
+          git push -f origin ci-logs
+
+      - name: Fail if the upload failed
+        if: steps.upload.outcome == 'failure'
+        run: exit 1
 
   publish:
     name: publish

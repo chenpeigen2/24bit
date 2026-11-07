@@ -46,10 +46,25 @@ export const PlayerBar = ({
     return Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
   };
 
-  const progress = snapshot.duration ? (snapshot.position / snapshot.duration) * 100 : 0;
+  // While a track is being fetched there is no transport yet; the download is
+  // the progress the user cares about, so the same bar shows it.
+  const fetching = snapshot.pending;
+  const fetchingPct =
+    fetching && fetching.total ? (fetching.done / fetching.total) * 100 : 0;
+
+  const progress = fetching
+    ? fetchingPct
+    : snapshot.duration
+      ? (snapshot.position / snapshot.duration) * 100
+      : 0;
+
+  const title = fetching?.title ?? snapshot.title;
+  const artist = fetching?.artist ?? snapshot.artist;
+  const cover = fetching?.cover || snapshot.cover;
+  const quality = fetching?.quality ?? snapshot.quality;
 
   return (
-    <footer className={`player${snapshot.title ? " has-track" : ""}`}>
+    <footer className={`player${title ? " has-track" : ""}${fetching ? " is-fetching" : ""}`}>
       <div className="progress">
         <span className="time">{duration(snapshot.position)}</span>
         <div
@@ -72,13 +87,19 @@ export const PlayerBar = ({
       <div className="player-row">
         <div className="playing">
           <div
-            className="playing-art"
-            style={snapshot.cover ? { backgroundImage: `url("${snapshot.cover}")` } : undefined}
+            className={`playing-art${fetching ? " is-fetching" : ""}`}
+            style={cover ? { backgroundImage: `url("${cover}")` } : undefined}
           />
           <div className="playing-text">
-            <div className="playing-title">{snapshot.title ?? "选一首歌开始播放"}</div>
+            <div className="playing-title">{title ?? "选一首歌开始播放"}</div>
             <div className="playing-artist">
-              {snapshot.title ? snapshot.artist : "从搜索或榜单开始"}
+              {fetching
+                ? fetching.total
+                  ? `准备中 · ${Math.round(fetchingPct)}%`
+                  : "准备中…"
+                : title
+                  ? artist
+                  : "从搜索或榜单开始"}
             </div>
           </div>
         </div>
@@ -100,7 +121,7 @@ export const PlayerBar = ({
         </div>
 
         <div className="right">
-          <span className="quality">{snapshot.quality ?? ""}</span>
+          <span className="quality">{quality ?? ""}</span>
           <button
             className={`ctl ctl-small${muted ? " is-muted" : ""}`}
             title={muted ? "取消静音" : "静音"}

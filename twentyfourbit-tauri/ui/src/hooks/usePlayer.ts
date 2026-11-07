@@ -12,6 +12,7 @@ const EMPTY: PlayerSnapshot = {
   quality: null,
   cover: null,
   engine_ready: true,
+  pending: null,
 };
 
 export interface PlayerApi {
@@ -59,6 +60,18 @@ export const usePlayer = (
           quality: "至臻母带",
           cover: demoSeed?.cover ?? null,
           engine_ready: true,
+          // `?pending=1` renders the fetching state for review.
+          pending: new URLSearchParams(location.search).has("pending")
+            ? {
+                id: demo.id,
+                title: demo.name,
+                artist: demo.player,
+                cover: demoSeed?.cover ?? "",
+                quality: "至臻母带",
+                done: 62_000_000,
+                total: 156_129_336,
+              }
+            : null,
         }
       : EMPTY,
   );
@@ -81,7 +94,28 @@ export const usePlayer = (
   /** The list the queue was built from, so `next` can resolve an id to a track. */
   const source = useRef<SearchItem[]>([]);
 
-  useEffect(() => onPlayer(setSnapshot), []);
+  /** Set while a request this hook started has not been acknowledged yet. */
+  const awaiting = useRef<string | null>(null);
+
+  useEffect(
+    () =>
+      onPlayer((next) => {
+        setSnapshot((prev) => {
+          // The publisher runs at 10Hz and reports "nothing loaded" until the
+          // backend has the track's metadata. Without this merge, that empty
+          // snapshot wipes the label the click just produced, and the bar falls
+          // back to "选一首歌开始播放" for the length of a metadata round trip.
+          if (awaiting.current && !next.title && !next.pending) {
+            return { ...next, title: prev.title, artist: prev.artist, cover: prev.cover };
+          }
+          if (!awaiting.current && (next.title || next.pending)) {
+            awaiting.current = null;
+          }
+          return next;
+        });
+      }),
+    [],
+  );
 
   const refreshGlow = useCallback((cover: string | null) => {
     applyAmbient(cover);
@@ -100,6 +134,7 @@ export const usePlayer = (
 
       setPlayingId(item.id);
       setPendingPlay(item.id);
+      awaiting.current = item.id;
       setLyrics([]);
       // Show the selection straight away; the engine will confirm.
       setSnapshot((prev) => ({
@@ -158,6 +193,7 @@ export const usePlayer = (
       queueIndex.current = next;
       setPlayingId(id);
       setPendingPlay(id);
+      awaiting.current = id;
       setSnapshot((prev) => ({
         ...prev,
         title: item.name,

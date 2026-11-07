@@ -44,6 +44,17 @@ export interface Settings {
   cache_dir: string;
 }
 
+/** A track being fetched, before it starts playing. */
+export interface PendingTrack {
+  id: string;
+  title: string;
+  artist: string;
+  cover: string;
+  quality: string;
+  done: number;
+  total: number | null;
+}
+
 export interface PlayerSnapshot {
   playing: boolean;
   position: number;
@@ -54,6 +65,8 @@ export interface PlayerSnapshot {
   cover: string | null;
   /** False when the audio engine could not start. */
   engine_ready: boolean;
+  /** Authoritative: what is being fetched right now, if anything. */
+  pending: PendingTrack | null;
 }
 
 export interface ProgressPayload {

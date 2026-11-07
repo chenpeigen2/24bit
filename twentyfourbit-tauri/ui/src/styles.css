@@ -1032,3 +1032,7 @@ input,
   font-weight: 550;
 }
 :root[data-theme="dark"] .status-error { color: #e08a90; }
+
+/* fetching state: the artwork is dimmed and the bar carries the download */
+.playing-art.is-fetching { opacity: 0.55; filter: saturate(0.7); }
+.player.is-fetching .bar-fill { opacity: 0.75; }

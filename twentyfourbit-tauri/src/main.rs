@@ -22,6 +22,13 @@ pub struct AppState {
     /// Metadata for whatever is loaded, so the player bar can label it without
     /// the frontend having to remember.
     current: Mutex<Option<TrackDetail>>,
+    /// The track being fetched right now.
+    ///
+    /// A master file is ~150MB, so the window between "clicked play" and "the
+    /// engine has a transport" is long enough to look broken. Publishing this
+    /// lets the player bar show the track and its download progress instead of
+    /// falling back to "nothing playing" while the bytes arrive.
+    pending: Mutex<Option<PendingTrack>>,
     quality: Mutex<Quality>,
 }
 
@@ -29,6 +36,18 @@ impl AppState {
     fn engine(&self) -> Option<Engine> {
         self.engine.lock().unwrap().clone()
     }
+}
+
+/// A track that is being fetched but has not started playing yet.
+#[derive(Serialize, Clone)]
+struct PendingTrack {
+    id: String,
+    title: String,
+    artist: String,
+    cover: String,
+    quality: String,
+    done: u64,
+    total: Option<u64>,
 }
 
 #[derive(Serialize, Clone)]
@@ -45,6 +64,9 @@ struct PlayerSnapshot {
     /// False when the audio engine could not start; the UI says so instead of
     /// showing a play button that can never do anything.
     engine_ready: bool,
+    /// Set while a track is being fetched. Authoritative: the frontend does not
+    /// have to guess what is happening.
+    pending: Option<PendingTrack>,
 }
 
 #[derive(Serialize)]
@@ -97,10 +119,40 @@ async fn prepare(
 ) -> Result<Prepared, String> {
     let tier = parse_quality(&quality);
 
+    // Label the track before the transfer starts. Without this the player bar
+    // has nothing to show for the whole download, which is most of the wait.
+    let key = twentyfourbit_core::CacheKey::new(&id, tier);
+    let detail = match state.cache.read_meta::<TrackDetail>(&key) {
+        Some(cached) => cached,
+        None => state
+            .client
+            .track(&id, tier)
+            .await
+            .map_err(|e| e.to_string())?,
+    };
+
+    *state.pending.lock().unwrap() = Some(PendingTrack {
+        id: id.clone(),
+        title: detail.name.clone(),
+        artist: detail.player.clone(),
+        cover: detail.cover.clone(),
+        quality: detail.quality.clone(),
+        done: 0,
+        total: None,
+    });
+
     let mut last = std::time::Instant::now() - std::time::Duration::from_secs(1);
     let result = state
         .client
         .fetch_cached_with_progress(&id, tier, &state.cache, |done, total| {
+            {
+                let mut slot = state.pending.lock().unwrap();
+                if let Some(p) = slot.as_mut() {
+                    p.done = done;
+                    p.total = total;
+                }
+            }
+
             let now = std::time::Instant::now();
             let finished = matches!(total, Some(t) if t > 0 && done >= t);
             if finished || now.duration_since(last) >= std::time::Duration::from_millis(120) {
@@ -111,10 +163,17 @@ async fn prepare(
                 );
             }
         })
-        .await
-        .map_err(|e| e.to_string())?;
+        .await;
 
-    let (path, detail) = result;
+    let fetched = match result {
+        Ok(fetched) => fetched,
+        Err(e) => {
+            *state.pending.lock().unwrap() = None;
+            return Err(e.to_string());
+        }
+    };
+
+    let (path, detail) = fetched;
     let lyrics = detail
         .lrc
         .as_deref()
@@ -129,6 +188,8 @@ async fn prepare(
 
     let accent = cover_accent(&detail.cover).unwrap_or([70, 70, 78]);
     *state.current.lock().unwrap() = Some(detail);
+    // Hand off from "fetching" to "playing"; the transport takes over from here.
+    *state.pending.lock().unwrap() = None;
 
     Ok(Prepared { id, lyrics, accent })
 }
@@ -545,6 +606,7 @@ fn main() {
                     }
                 }),
                 current: Mutex::new(None),
+                pending: Mutex::new(None),
                 quality: Mutex::new(cfg.quality),
             };
             app.manage(state);
@@ -574,6 +636,7 @@ fn main() {
                     }
 
                     let detail = state.current.lock().unwrap().clone();
+                    let pending = state.pending.lock().unwrap().clone();
 
                     let snapshot = match engine.as_ref().and_then(|e| e.snapshot().transport) {
                         Some(t) => PlayerSnapshot {
@@ -587,6 +650,7 @@ fn main() {
                             size: detail.as_ref().map(|d| d.size.clone()),
                             album: detail.as_ref().map(|d| d.album.clone()),
                             engine_ready: ready,
+                            pending: pending.clone(),
                         },
                         None => PlayerSnapshot {
                             playing: false,
@@ -599,6 +663,7 @@ fn main() {
                             size: detail.as_ref().map(|d| d.size.clone()),
                             album: detail.as_ref().map(|d| d.album.clone()),
                             engine_ready: ready,
+                            pending,
                         },
                     };
 

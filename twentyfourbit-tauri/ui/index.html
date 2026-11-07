@@ -1,0 +1,164 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>24bit</title>
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<div class="window">
+
+  <aside class="sidebar">
+    <div class="brand">
+      <span class="brand-mark">24bit</span>
+      <span class="brand-sub">HI-RES</span>
+    </div>
+
+    <div class="nav-label">浏览</div>
+    <nav class="nav" id="nav">
+      <button class="nav-item is-active" data-page="search">
+        <svg viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="5.5"/><path d="M15 15l4.5 4.5"/></svg>
+        <span>搜索</span>
+      </button>
+      <button class="nav-item" data-page="charts">
+        <svg viewBox="0 0 24 24"><path d="M9 18V6l10-2v12"/><circle cx="6.5" cy="18" r="2.5"/><circle cx="16.5" cy="16" r="2.5"/></svg>
+        <span>榜单</span>
+      </button>
+      <button class="nav-item" data-page="library">
+        <svg viewBox="0 0 24 24"><path d="M4 5v14M9 5v14M14 5v14M19 6.5l1.5 13"/></svg>
+        <span>音乐库</span>
+      </button>
+      <button class="nav-item" data-page="settings">
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3.2"/><path d="M12 3v2.2M12 18.8V21M3 12h2.2M18.8 12H21M5.6 5.6l1.6 1.6M16.8 16.8l1.6 1.6M18.4 5.6l-1.6 1.6M7.2 16.8l-1.6 1.6"/></svg>
+        <span>设置</span>
+      </button>
+    </nav>
+
+    <div class="sidebar-foot">
+      <div class="now-card" id="now-card" hidden>
+        <div class="now-art" id="now-art"></div>
+        <div class="now-text">
+          <div class="now-title" id="now-title"></div>
+          <div class="now-artist" id="now-artist"></div>
+        </div>
+      </div>
+      <div class="cache-line" id="cache-line">0 个文件 · 0 B</div>
+    </div>
+  </aside>
+
+  <main class="content">
+
+    <!-- 搜索 -->
+    <section class="page" data-page="search">
+      <header class="page-head">
+        <h1>搜索</h1>
+        <p>同时检索两个曲库，结果自动合并去重</p>
+      </header>
+
+      <div class="search-row">
+        <div class="field">
+          <svg viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="5.5"/><path d="M15 15l4.5 4.5"/></svg>
+          <input id="q" type="text" placeholder="歌曲 / 歌手" autocomplete="off" spellcheck="false">
+        </div>
+      </div>
+
+      <div class="split">
+        <div class="list-wrap">
+          <div class="list-meta" id="result-count"></div>
+          <div class="list" id="results"></div>
+          <div class="empty" id="empty">
+            <div class="empty-icon">
+              <svg viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="5.5"/><path d="M15 15l4.5 4.5"/></svg>
+            </div>
+            <h2>输入关键词开始搜索</h2>
+            <p>试试歌名或歌手，例如「富士山下」「陈奕迅」</p>
+            <button class="pill" id="empty-cta">浏览本周榜单</button>
+          </div>
+        </div>
+
+        <aside class="inspector" id="inspector" hidden>
+          <div class="art" id="insp-art"></div>
+          <h2 class="insp-title" id="insp-title"></h2>
+          <div class="insp-artist" id="insp-artist"></div>
+          <div class="insp-album" id="insp-album"></div>
+          <div class="insp-meta" id="insp-meta"></div>
+          <div class="insp-actions">
+            <button class="btn-primary" id="insp-play">播放</button>
+            <button class="btn-secondary" id="insp-dl">下载</button>
+          </div>
+          <div class="lyrics" id="lyrics"></div>
+        </aside>
+      </div>
+    </section>
+
+    <!-- 榜单 -->
+    <section class="page" data-page="charts" hidden>
+      <header class="page-head">
+        <h1>本周榜单</h1>
+        <p>24bit.net 每周播放统计</p>
+      </header>
+      <div class="charts" id="charts"></div>
+    </section>
+
+    <!-- 音乐库 -->
+    <section class="page" data-page="library" hidden>
+      <header class="page-head">
+        <h1>音乐库</h1>
+        <p>已缓存的曲目，可离线播放</p>
+      </header>
+      <div class="list" id="library"></div>
+    </section>
+
+    <!-- 设置 -->
+    <section class="page" data-page="settings" hidden>
+      <header class="page-head">
+        <h1>设置</h1>
+        <p>音质、缓存与账号</p>
+      </header>
+      <div class="settings" id="settings"></div>
+    </section>
+
+  </main>
+
+  <footer class="player">
+    <div class="progress">
+      <span class="time" id="t-pos">0:00</span>
+      <div class="bar" id="bar"><div class="bar-fill" id="bar-fill"></div><div class="bar-knob" id="bar-knob"></div></div>
+      <span class="time" id="t-dur">0:00</span>
+    </div>
+    <div class="player-row">
+      <div class="playing">
+        <div class="playing-art" id="p-art"></div>
+        <div>
+          <div class="playing-title" id="p-title">选一首歌开始播放</div>
+          <div class="playing-artist" id="p-artist">从搜索或榜单开始</div>
+        </div>
+      </div>
+      <div class="controls">
+        <button class="ctl" id="prev" aria-label="重新开始">
+          <svg viewBox="0 0 24 24"><path d="M6 6v12M18 6.5v11L9.5 12z"/></svg>
+        </button>
+        <button class="ctl ctl-play" id="play" aria-label="播放">
+          <svg viewBox="0 0 24 24"><path d="M9 6.5L18 12 9 17.5z"/></svg>
+        </button>
+        <button class="ctl" id="next" aria-label="下一首">
+          <svg viewBox="0 0 24 24"><path d="M18 6v12M6 6.5v11L14.5 12z"/></svg>
+        </button>
+      </div>
+      <div class="right">
+        <span class="quality" id="p-quality"></span>
+        <button class="ctl ctl-small" id="mute" aria-label="静音">
+          <svg viewBox="0 0 24 24"><path d="M4.5 9.5h3l4-3.5v12l-4-3.5h-3z"/><path d="M15 9a4 4 0 010 6"/></svg>
+        </button>
+        <input class="volume" id="volume" type="range" min="0" max="1" step="0.01" value="1">
+      </div>
+    </div>
+  </footer>
+
+  <div class="status" id="status"></div>
+</div>
+
+<script src="app.js" type="module"></script>
+</body>
+</html>

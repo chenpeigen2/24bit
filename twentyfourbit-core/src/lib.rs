@@ -44,6 +44,7 @@ pub mod cache;
 pub mod client;
 pub mod config;
 pub mod error;
+pub mod lyrics;
 pub mod model;
 
 pub use client::{file_extension_for, part_path, Client, ClientBuilder, DEFAULT_BASE_URL};

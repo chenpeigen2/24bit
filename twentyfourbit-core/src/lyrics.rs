@@ -17,12 +17,29 @@
 use std::time::Duration;
 
 /// One sung line.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct LyricLine {
-    /// When the line starts.
+    /// When the line starts, in milliseconds (serialised as a plain number so
+    /// the webview can compare it against the player position directly).
+    #[serde(with = "duration_ms")]
     pub at: Duration,
     /// What is sung.
     pub text: String,
+}
+
+/// Serialise a `Duration` as whole milliseconds.
+mod duration_ms {
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+    use std::time::Duration;
+
+    pub fn serialize<S: Serializer>(value: &Duration, s: S) -> Result<S::Ok, S::Error> {
+        value.as_millis().to_string().parse::<u64>().map_err(serde::ser::Error::custom)?.serialize(s)
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<Duration, D::Error> {
+        let ms = u64::deserialize(d)?;
+        Ok(Duration::from_millis(ms))
+    }
 }
 
 /// A whole track's lyrics, sorted and offset-adjusted.

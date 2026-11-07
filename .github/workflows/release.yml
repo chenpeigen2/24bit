@@ -127,10 +127,13 @@ jobs:
         if: runner.os == 'macOS'
         run: |
           set -euo pipefail
-          VERSION="${GITHUB_REF_NAME#v}"
-          [ -z "$VERSION" ] && VERSION="0.0.0"
-          APP_DIR="dist/$APP.app"
-          rm -rf dist && mkdir -p "$APP_DIR/Contents/MacOS" "$APP_DIR/Contents/Resources"
+          VERSION="${GITHUB_REF_NAME:-v0.0.0}"
+          VERSION="${VERSION#v}"
+          # The .app bundle is staged outside dist/ so that dist/ holds nothing
+          # but release assets: the upload below ships the whole directory.
+          APP_DIR="$RUNNER_TEMP/$APP.app"
+          rm -rf dist "$APP_DIR"
+          mkdir -p "$APP_DIR/Contents/MacOS" "$APP_DIR/Contents/Resources" dist
           cp "target/${{ matrix.target }}/release/$BIN" "$APP_DIR/Contents/MacOS/$APP"
           cp assets/icon.icns "$APP_DIR/Contents/Resources/icon.icns"
           cat > "$APP_DIR/Contents/Info.plist" <<PLIST
@@ -161,12 +164,16 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           set -euo pipefail
-          VERSION="${GITHUB_REF_NAME#v}"
-          [ -z "$VERSION" ] && VERSION="0.0.0"
+          VERSION="${GITHUB_REF_NAME:-v0.0.0}"
+          VERSION="${VERSION#v}"
           BIN_PATH="target/${{ matrix.target }}/release/$BIN"
-          mkdir -p dist
+          # Staging trees live outside dist/ so that dist/ holds nothing but
+          # release assets: the upload below ships the whole directory.
+          WORK="$RUNNER_TEMP/24bit-pkg"
+          rm -rf dist "$WORK"
+          mkdir -p dist "$WORK"
 
-          # --- staged tree shared by deb and rpm
+          # --- staged tree shared by deb, rpm and the AppDir
           stage() {
             local root="$1"
             mkdir -p "$root/usr/bin" "$root/usr/share/applications" \
@@ -178,7 +185,7 @@ jobs:
           }
 
           # --- .deb
-          DEB="dist/deb"
+          DEB="$WORK/deb"
           stage "$DEB"
           mkdir -p "$DEB/DEBIAN"
           INSTALLED=$(du -sk "$DEB/usr" | cut -f1)
@@ -198,7 +205,7 @@ jobs:
           dpkg-deb --root-owner-group --build "$DEB" "dist/24bit_${VERSION}_amd64.deb"
 
           # --- .rpm
-          RPMROOT="$PWD/dist/rpmbuild"
+          RPMROOT="$WORK/rpmbuild"
           mkdir -p "$RPMROOT"/{BUILD,RPMS,SOURCES,SPECS,SRPMS}
           cat > "$RPMROOT/SPECS/24bit.spec" <<EOF
           Name: 24bit
@@ -226,7 +233,7 @@ jobs:
           cp "$RPMROOT"/RPMS/x86_64/*.rpm dist/
 
           # --- AppImage
-          APPDIR="$PWD/dist/24bit.AppDir"
+          APPDIR="$WORK/24bit.AppDir"
           stage "$APPDIR"
           cp assets/icon.png "$APPDIR/24bit.png"
           cp packaging/24bit.desktop "$APPDIR/24bit.desktop"
@@ -250,38 +257,74 @@ jobs:
         run: |
           $version = $env:GITHUB_REF_NAME -replace '^v', ''
           if (-not $version) { $version = "0.0.0" }
-          New-Item -ItemType Directory -Force -Path dist\24bit | Out-Null
-          Copy-Item "target\${{ matrix.target }}\release\$env:BIN.exe" "dist\24bit\24bit.exe"
-          Copy-Item "assets\icon.png" "dist\24bit\icon.png"
-          Copy-Item "README.md" "dist\24bit\README.md"
-          Compress-Archive -Path dist\24bit -DestinationPath "dist\24bit-${{ matrix.name }}-$version.zip" -Force
+          # The staged tree lives outside dist/ so that dist/ holds nothing but
+          # release assets: the upload below ships the whole directory.
+          $stage = Join-Path $env:RUNNER_TEMP "24bit"
+          if (Test-Path dist) { Remove-Item -Recurse -Force dist }
+          New-Item -ItemType Directory -Force -Path $stage | Out-Null
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          Copy-Item "target\${{ matrix.target }}\release\$env:BIN.exe" "$stage\24bit.exe"
+          Copy-Item "assets\icon.png" "$stage\icon.png"
+          Copy-Item "README.md" "$stage\README.md"
+          Compress-Archive -Path $stage -DestinationPath "dist\24bit-${{ matrix.name }}-$version.zip" -Force
 
-      - name: List packages
-        run: ls -lR dist || true
+      # Assert here rather than at upload time: a packaging step that writes
+      # nothing must fail with the name of the missing artefact, and the
+      # upload-artifact error is not reachable without a token.
+      - name: Verify installers
+        shell: bash
+        run: |
+          set -uo pipefail
+          ls -lR dist
+          case "${{ matrix.name }}" in
+            linux-*) expected="dist/*.deb dist/*.rpm dist/*.AppImage" ;;
+            *)       expected="dist/*.zip" ;;
+          esac
+          status=0
+          # Word splitting is intended: one glob per element.
+          for pattern in $expected; do
+            # shellcheck disable=SC2086
+            if ls $pattern > /dev/null 2>&1; then
+              echo "ok: $pattern"
+            else
+              echo "::error::the packaging step produced no file matching $pattern"
+              status=1
+            fi
+          done
+          exit $status
 
-      - id: upload
-        continue-on-error: true
-        uses: actions/upload-artifact@v4
+      # upload-artifact splits `path` on newlines only. A space-separated list
+      # such as `dist/*.zip dist/*.deb` is one literal glob that matches
+      # nothing, which is what made every build fail here while the packaging
+      # steps had in fact succeeded.
+      - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.name }}
           path: dist/
           if-no-files-found: error
 
+      # Job logs need a token to download. Dumping the state to a branch is the
+      # only way to see why a runner I cannot reproduce locally failed. One
+      # branch per matrix entry, so four concurrent failures cannot overwrite
+      # each other.
       - name: Publish failure log
-        if: steps.upload.outcome == 'failure'
+        if: failure()
+        shell: bash
         run: |
           mkdir -p ci-logs
-          { echo "== ls -lR dist =="; ls -lR dist || true; } > ci-logs/build-${{ matrix.name }}.log
+          {
+            echo "== ${{ matrix.name }} =="
+            echo "== ls -lR dist =="
+            ls -lR dist || true
+            echo "== staging tree =="
+            ls -lR "$(cygpath -u "$RUNNER_TEMP" 2>/dev/null || echo "$RUNNER_TEMP")" || true
+          } > "ci-logs/build-${{ matrix.name }}.log"
           git config user.name "ci"
           git config user.email "ci@localhost"
-          git checkout -B ci-logs
+          git checkout -B "ci-logs/${{ matrix.name }}"
           git add ci-logs
           git commit -m "ci: ${{ matrix.name }} build log" || true
-          git push -f origin ci-logs
-
-      - name: Fail if the upload failed
-        if: steps.upload.outcome == 'failure'
-        run: exit 1
+          git push -f origin "ci-logs/${{ matrix.name }}"
 
   publish:
     name: publish
@@ -294,10 +337,17 @@ jobs:
           path: artifacts
           merge-multiple: true
       - name: List artefacts
-        run: ls -lh artifacts
+        run: ls -lhR artifacts
       - uses: softprops/action-gh-release@v2
         with:
-          files: artifacts/*
+          # One pattern per extension and fail_on_unmatched_files: a release
+          # that is missing a platform is worse than no release at all.
+          files: |
+            artifacts/*.zip
+            artifacts/*.deb
+            artifacts/*.rpm
+            artifacts/*.AppImage
+          fail_on_unmatched_files: true
           generate_release_notes: true
           draft: false
           # A tag with a "-" is a pre-release, which keeps "latest" pointing at

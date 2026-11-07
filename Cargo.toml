@@ -3,7 +3,7 @@ members = [
     "twentyfourbit-core",
     "twentyfourbit-player",
     "twentyfourbit-cli",
-    "twentyfourbit-gui",
+    "twentyfourbit-tauri",
 ]
 resolver = "2"
 

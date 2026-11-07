@@ -102,6 +102,8 @@ pub struct App {
     show_lyrics: bool,
     export_dir: PathBuf,
     cjk_font: Option<String>,
+    /// Whether the blurred backdrop was installed. `None` until we have tried.
+    glass: Option<bool>,
     font_warning: Option<String>,
 
     login_account: String,
@@ -189,6 +191,7 @@ impl App {
             show_lyrics: true,
             export_dir: default_export_dir(),
             cjk_font: cjk,
+            glass: None,
             font_warning,
             login_account: String::new(),
             login_password: String::new(),
@@ -345,6 +348,33 @@ impl App {
         self.now_playing.as_ref().map(|d| d.name.as_str())
     }
 
+    /// Try once to put a blurred backdrop behind the window.
+    ///
+    /// Failure is not fatal: the interface simply stays opaque.
+    fn install_glass(&mut self, frame: &eframe::Frame) {
+        if self.glass.is_some() {
+            return;
+        }
+
+        use raw_window_handle::HasWindowHandle;
+
+        let installed = frame
+            .window_handle()
+            .ok()
+            .map(|handle| handle.as_raw())
+            .map(crate::vibrancy::install)
+            .unwrap_or(false);
+
+        if installed {
+            tracing::info!("blurred window backdrop installed");
+        } else if crate::vibrancy::SUPPORTED {
+            tracing::debug!("no blurred backdrop; falling back to opaque surfaces");
+        }
+
+        crate::theme::set_glass(installed);
+        self.glass = Some(installed);
+    }
+
     /// Global shortcuts.
     ///
     /// Only when no text field has focus, otherwise Space would type a space and
@@ -414,7 +444,7 @@ impl App {
             ui.allocate_exact_size(Vec2::new(ui.available_width(), HEADER_H), Sense::drag());
         let painter = ui.painter().clone();
 
-        painter.rect_filled(rect, 0.0, PANEL);
+        painter.rect_filled(rect, 0.0, panel());
         painter.rect_filled(
             Rect::from_min_max(
                 Pos2::new(rect.left(), rect.bottom() - 1.0),
@@ -457,7 +487,7 @@ impl App {
             Pos2::new(rect.right() - 20.0 - chip_w / 2.0, rect.center().y),
             Vec2::new(chip_w, 22.0),
         );
-        painter.rect_filled(chip, 11.0, CARD);
+        painter.rect_filled(chip, 11.0, card());
         painter.text(
             chip.center(),
             Align2::CENTER_CENTER,
@@ -471,7 +501,7 @@ impl App {
         egui::Panel::left("nav")
             .exact_size(SIDEBAR_W)
             .resizable(false)
-            .frame(egui::Frame::NONE.fill(PANEL))
+            .frame(egui::Frame::NONE.fill(panel()))
             .show(ui, |ui| {
                 let rect = ui.max_rect();
                 ui.painter().rect_filled(
@@ -544,7 +574,7 @@ impl App {
         if active {
             icons::card(&painter, pill, RADIUS_SM, ACCENT_SOFT, None);
         } else if response.hovered() {
-            icons::card(&painter, pill, RADIUS_SM, CARD, None);
+            icons::card(&painter, pill, RADIUS_SM, card(), None);
         }
 
         let fg = if active {
@@ -585,7 +615,7 @@ impl App {
     fn status_bar(&mut self, ui: &mut egui::Ui) {
         egui::Panel::bottom("status")
             .exact_size(STATUS_H)
-            .frame(egui::Frame::NONE.fill(PANEL))
+            .frame(egui::Frame::NONE.fill(panel()))
             .show(ui, |ui| {
                 let rect = ui.max_rect();
                 ui.painter().rect_filled(
@@ -683,7 +713,7 @@ impl App {
 
         egui::Panel::bottom("transport")
             .exact_size(TRANSPORT_H)
-            .frame(egui::Frame::NONE.fill(PANEL))
+            .frame(egui::Frame::NONE.fill(panel()))
             .show(ui, |ui| {
                 let rect = ui.max_rect();
                 let painter = ui.painter().clone();
@@ -972,7 +1002,7 @@ impl App {
                 return;
             }
         }
-        ui.painter().rect_filled(rect, RADIUS_SM, CARD_HOVER);
+        ui.painter().rect_filled(rect, RADIUS_SM, card_hover());
         icons::paint(
             ui.painter(),
             Rect::from_center_size(rect.center(), Vec2::splat(rect.width() * 0.40)),
@@ -1000,7 +1030,7 @@ impl App {
         egui::Panel::right("lyrics-304")
             .exact_size(304.0)
             .resizable(false)
-            .frame(egui::Frame::NONE.fill(PANEL))
+            .frame(egui::Frame::NONE.fill(panel()))
             .show(ui, |ui| {
                 let rect = ui.max_rect();
                 ui.painter().rect_filled(
@@ -1094,7 +1124,7 @@ impl App {
             let (rect, _) = ui.allocate_exact_size(Vec2::new(width, 38.0), Sense::hover());
 
             let painter = ui.painter().clone();
-            icons::card(&painter, rect, RADIUS_SM, CARD, Some(BORDER));
+            icons::card(&painter, rect, RADIUS_SM, card(), Some(BORDER));
             icons::paint(
                 &painter,
                 Rect::from_center_size(
@@ -1267,7 +1297,7 @@ impl App {
                 ACCENT,
             );
         } else if hover {
-            icons::card(&painter, rect, RADIUS, CARD, None);
+            icons::card(&painter, rect, RADIUS, card(), None);
         }
 
         if hover {
@@ -1385,7 +1415,7 @@ impl App {
                     let painter = child.painter();
 
                     if row_response.hovered() {
-                        icons::card(&painter, r, RADIUS_SM, CARD, None);
+                        icons::card(&painter, r, RADIUS_SM, card(), None);
                     }
 
                     painter.text(
@@ -1523,7 +1553,7 @@ impl App {
 
                     let painter = ui.painter().clone();
                     if hover {
-                        icons::card(&painter, rect, RADIUS_SM, CARD, None);
+                        icons::card(&painter, rect, RADIUS_SM, card(), None);
                     }
 
                     icons::paint(
@@ -1808,7 +1838,7 @@ fn choice_group(ui: &mut egui::Ui, rows: &[(&str, &str)], selected: Option<usize
     let height = row_h * rows.len() as f32;
     let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), height), Sense::hover());
 
-    icons::card(ui.painter(), rect, RADIUS_SM, BG, None);
+    icons::card(ui.painter(), rect, RADIUS_SM, bg(), None);
 
     let mut picked = None;
     for (i, (title, detail)) in rows.iter().enumerate() {
@@ -1827,7 +1857,7 @@ fn choice_group(ui: &mut egui::Ui, rows: &[(&str, &str)], selected: Option<usize
         let is_selected = selected == Some(i);
 
         if response.hovered() {
-            painter.rect_filled(row, 0.0, CARD_HOVER);
+            painter.rect_filled(row, 0.0, card_hover());
         }
         // Selection is carried by the radio dot alone. A filled row would be a
         // second, louder statement of the same fact and muddies the card.
@@ -1908,7 +1938,7 @@ fn empty_state_with(
     let painter = ui.painter().clone();
     let centre = Pos2::new(rect.center().x, rect.top() + height * 0.34);
 
-    painter.circle_filled(centre, 32.0, CARD);
+    painter.circle_filled(centre, 32.0, card());
     icons::paint(
         &painter,
         Rect::from_center_size(centre, Vec2::splat(26.0)),
@@ -1952,7 +1982,7 @@ fn empty_state_with(
         &painter,
         button,
         RADIUS_SM,
-        if response.hovered() { CARD_HOVER } else { CARD },
+        if response.hovered() { card_hover() } else { card() },
         None,
     );
     icons::paint(
@@ -1985,7 +2015,7 @@ fn section(ui: &mut egui::Ui, title: &str, body: impl FnOnce(&mut egui::Ui)) {
     );
     ui.add_space(GAP);
     egui::Frame::NONE
-        .fill(BG)
+        .fill(bg())
         .corner_radius(RADIUS as u8)
         .stroke(Stroke::new(1.0, BORDER))
         .inner_margin(egui::Margin::same(16))
@@ -1997,14 +2027,24 @@ fn section(ui: &mut egui::Ui, title: &str, body: impl FnOnce(&mut egui::Ui)) {
 }
 
 impl eframe::App for App {
-    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+    fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
+        self.install_glass(frame);
         self.draw(ui);
     }
 
     fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
+        if self.glass == Some(true) {
+            // Leave the framebuffer transparent so the blurred backdrop shows.
+            return [0.0, 0.0, 0.0, 0.0];
+        }
         // Without an explicit clear colour the window shows the desktop through
         // any area a panel does not cover.
-        [BG.r() as f32 / 255.0, BG.g() as f32 / 255.0, BG.b() as f32 / 255.0, 1.0]
+        [
+            BG.r() as f32 / 255.0,
+            BG.g() as f32 / 255.0,
+            BG.b() as f32 / 255.0,
+            1.0,
+        ]
     }
 
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {

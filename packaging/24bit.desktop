@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Application
+Name=24bit
+Name[zh_CN]=24bit 无损音乐
+GenericName=Music Player
+Comment=Unofficial client for 24bit.net
+Comment[zh_CN]=24bit.net 的非官方客户端
+Exec=24bit
+Icon=24bit
+Terminal=false
+Categories=AudioVideo;Audio;Player;
+Keywords=music;audio;lossless;flac;hires;
+StartupWMClass=24bit

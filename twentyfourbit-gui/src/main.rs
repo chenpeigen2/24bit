@@ -17,6 +17,7 @@ fn main() -> eframe::Result<()> {
             .with_title("24bit — Hi-Res 无损音乐")
             // Seamless dark chrome: content flows behind a transparent titlebar,
             // and the app draws its own header around the traffic lights.
+            .with_transparent(true)
             .with_fullsize_content_view(true)
             .with_title_shown(false)
             .with_titlebar_buttons_shown(true),

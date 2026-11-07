@@ -166,14 +166,14 @@ pub fn button(ui: &mut Ui, icon: Icon, diameter: f32, style: Style) -> Response 
         ),
         Style::Filled => (
             Some(if hovered {
-                crate::theme::CARD_HOVER
+                crate::theme::card_hover()
             } else {
-                crate::theme::CARD
+                crate::theme::card()
             }),
             crate::theme::TEXT,
         ),
         Style::Ghost => (
-            hovered.then_some(crate::theme::CARD_HOVER),
+            hovered.then_some(crate::theme::card_hover()),
             if hovered { crate::theme::TEXT } else { crate::theme::TEXT_MUTED },
         ),
     };
@@ -241,7 +241,7 @@ pub fn button_at(ui: &mut Ui, rect: Rect, icon: Icon, style: Style) -> Response 
             Some(if hovered {
                 crate::theme::ACCENT
             } else {
-                crate::theme::CARD_HOVER
+                crate::theme::card_hover()
             }),
             if hovered {
                 crate::theme::ON_ACCENT
@@ -250,14 +250,14 @@ pub fn button_at(ui: &mut Ui, rect: Rect, icon: Icon, style: Style) -> Response 
             },
         ),
         Style::Ghost => (
-            hovered.then_some(crate::theme::CARD_HOVER),
+            hovered.then_some(crate::theme::card_hover()),
             if hovered { crate::theme::TEXT } else { crate::theme::TEXT_MUTED },
         ),
     };
 
     // A press must be visible: without it a slow action feels like a dead click.
     let bg = if pressed {
-        Some(crate::theme::CARD_HOVER)
+        Some(crate::theme::card_hover())
     } else {
         bg
     };

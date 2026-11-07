@@ -87,6 +87,63 @@ pub const TRANSPORT_H: f32 = 96.0;
 /// Status strip height.
 pub const STATUS_H: f32 = 26.0;
 
+// ------------------------------------------------------- translucent mode
+//
+// When the window has a blurred backdrop behind it, surfaces become
+// semi-transparent so the blur reads through. The content plane stays nearly
+// opaque: text over a strong blur is tiring, and Apple's own apps keep document
+// views solid while the chrome floats.
+
+use std::sync::atomic::{AtomicBool, Ordering};
+
+static GLASS: AtomicBool = AtomicBool::new(false);
+
+/// Enable or disable translucent surfaces.
+pub fn set_glass(on: bool) {
+    GLASS.store(on, Ordering::Relaxed);
+}
+
+/// True when surfaces are translucent.
+pub fn glass() -> bool {
+    GLASS.load(Ordering::Relaxed)
+}
+
+/// The content plane.
+pub fn bg() -> Color32 {
+    if glass() {
+        Color32::from_rgba_unmultiplied(255, 255, 255, 216)
+    } else {
+        BG
+    }
+}
+
+/// Chrome: sidebar, header, transport.
+pub fn panel() -> Color32 {
+    if glass() {
+        Color32::from_rgba_unmultiplied(255, 255, 255, 150)
+    } else {
+        PANEL
+    }
+}
+
+/// Inputs, rows and grouped containers.
+pub fn card() -> Color32 {
+    if glass() {
+        Color32::from_rgba_unmultiplied(255, 255, 255, 150)
+    } else {
+        CARD
+    }
+}
+
+/// Cards under the pointer.
+pub fn card_hover() -> Color32 {
+    if glass() {
+        Color32::from_rgba_unmultiplied(255, 255, 255, 205)
+    } else {
+        CARD_HOVER
+    }
+}
+
 /// A soft shadow, for the few surfaces that float above the page.
 pub fn shadow() -> egui::epaint::Shadow {
     egui::epaint::Shadow {
@@ -172,6 +229,11 @@ pub fn apply(ctx: &egui::Context) {
 /// exists only to guarantee no part of the window is left unpainted when a panel
 /// does not cover it.
 pub fn paint_backdrop(painter: &egui::Painter, rect: egui::Rect) {
+    if glass() {
+        // The blur lives behind the framebuffer; painting an opaque colour here
+        // would cover it.
+        return;
+    }
     painter.rect_filled(rect, 0.0, BG);
 }
 

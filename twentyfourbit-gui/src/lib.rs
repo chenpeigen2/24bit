@@ -14,3 +14,4 @@ pub mod icons;
 pub mod lyrics;
 pub mod theme;
 pub mod ui_state;
+pub mod vibrancy;

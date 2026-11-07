@@ -1,0 +1,241 @@
+name: release
+
+# Build installers for every desktop platform and publish them as a GitHub
+# Release. Triggered by a version tag, or by hand from the Actions tab.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to publish (e.g. v0.1.0). Required for a manual run."
+        required: false
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+  BIN: 24bit-gui
+  APP: 24bit
+
+jobs:
+  # Fail fast: a release with a broken test suite is worse than no release.
+  test:
+    name: test
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            pkg-config libasound2-dev libudev-dev \
+            libxkbcommon-dev libwayland-dev libx11-dev libxcursor-dev \
+            libxi-dev libxrandr-dev libxinerama-dev libgl1-mesa-dev
+      - run: cargo test --workspace --all-targets
+
+  build:
+    name: ${{ matrix.name }}
+    needs: test
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            name: macos-arm64
+            target: aarch64-apple-darwin
+          - os: macos-latest
+            name: macos-x64
+            target: x86_64-apple-darwin
+          - os: ubuntu-22.04
+            name: linux-x64
+            target: x86_64-unknown-linux-gnu
+          - os: windows-latest
+            name: windows-x64
+            target: x86_64-pc-windows-msvc
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.name }}
+
+      - name: Linux build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            pkg-config libasound2-dev libudev-dev \
+            libxkbcommon-dev libwayland-dev libx11-dev libxcursor-dev \
+            libxi-dev libxrandr-dev libxinerama-dev libgl1-mesa-dev \
+            rpm dpkg-dev
+
+      - name: Build
+        run: cargo build --release --target ${{ matrix.target }} -p twentyfourbit-gui
+
+      # ---------------------------------------------------------------- macOS
+      - name: Package (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          set -euo pipefail
+          VERSION="${GITHUB_REF_NAME#v}"
+          [ -z "$VERSION" ] && VERSION="0.0.0"
+          APP_DIR="dist/$APP.app"
+          rm -rf dist && mkdir -p "$APP_DIR/Contents/MacOS" "$APP_DIR/Contents/Resources"
+          cp "target/${{ matrix.target }}/release/$BIN" "$APP_DIR/Contents/MacOS/$APP"
+          cp assets/icon.icns "$APP_DIR/Contents/Resources/icon.icns"
+          cat > "$APP_DIR/Contents/Info.plist" <<PLIST
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+              <key>CFBundleName</key><string>24bit</string>
+              <key>CFBundleDisplayName</key><string>24bit</string>
+              <key>CFBundleIdentifier</key><string>net.twentyfourbit.client</string>
+              <key>CFBundleVersion</key><string>$VERSION</string>
+              <key>CFBundleShortVersionString</key><string>$VERSION</string>
+              <key>CFBundlePackageType</key><string>APPL</string>
+              <key>CFBundleExecutable</key><string>24bit</string>
+              <key>CFBundleIconFile</key><string>icon.icns</string>
+              <key>LSMinimumSystemVersion</key><string>11.0</string>
+              <key>NSHighResolutionCapable</key><true/>
+          </dict>
+          </plist>
+          PLIST
+          # Ad-hoc signature: without one, Gatekeeper refuses the bundle outright.
+          codesign --force --deep --sign - "$APP_DIR"
+          # ditto preserves the bundle's metadata and symlinks; zip(1) does not.
+          ditto -c -k --sequesterRsrc --keepParent "$APP_DIR" "dist/$APP-${{ matrix.name }}-$VERSION.zip"
+
+      # ---------------------------------------------------------------- Linux
+      - name: Package (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          set -euo pipefail
+          VERSION="${GITHUB_REF_NAME#v}"
+          [ -z "$VERSION" ] && VERSION="0.0.0"
+          BIN_PATH="target/${{ matrix.target }}/release/$BIN"
+          mkdir -p dist
+
+          # --- staged tree shared by deb and rpm
+          stage() {
+            local root="$1"
+            mkdir -p "$root/usr/bin" "$root/usr/share/applications" \
+                     "$root/usr/share/icons/hicolor/512x512/apps" \
+                     "$root/usr/share/doc/24bit"
+            install -m755 "$BIN_PATH" "$root/usr/bin/24bit"
+            install -m644 packaging/24bit.desktop "$root/usr/share/applications/24bit.desktop"
+            install -m644 assets/icon.png "$root/usr/share/icons/hicolor/512x512/apps/24bit.png"
+          }
+
+          # --- .deb
+          DEB="dist/deb"
+          stage "$DEB"
+          mkdir -p "$DEB/DEBIAN"
+          INSTALLED=$(du -sk "$DEB/usr" | cut -f1)
+          cat > "$DEB/DEBIAN/control" <<EOF
+          Package: 24bit
+          Version: $VERSION
+          Section: sound
+          Priority: optional
+          Architecture: amd64
+          Maintainer: chenpeigen <chenpeigen@users.noreply.github.com>
+          Installed-Size: $INSTALLED
+          Depends: libasound2, libxkbcommon0, libwayland-client0, libx11-6, libgl1
+          Description: Unofficial desktop client for 24bit.net
+           Hi-Res lossless music browser, player and downloader for 24bit.net,
+           written in Rust.
+          EOF
+          dpkg-deb --root-owner-group --build "$DEB" "dist/24bit_${VERSION}_amd64.deb"
+
+          # --- .rpm
+          RPMROOT="$PWD/dist/rpmbuild"
+          mkdir -p "$RPMROOT"/{BUILD,RPMS,SOURCES,SPECS,SRPMS}
+          cat > "$RPMROOT/SPECS/24bit.spec" <<EOF
+          Name: 24bit
+          Version: $VERSION
+          Release: 1
+          Summary: Unofficial desktop client for 24bit.net
+          License: MIT OR Apache-2.0
+          URL: https://github.com/${{ github.repository }}
+          BuildArch: x86_64
+          Requires: alsa-lib, libxkbcommon, wayland, libX11, mesa-libGL
+          %description
+          Hi-Res lossless music browser, player and downloader for 24bit.net.
+          %install
+          mkdir -p %{buildroot}/usr/bin %{buildroot}/usr/share/applications \\
+                   %{buildroot}/usr/share/icons/hicolor/512x512/apps
+          install -m755 $PWD/$BIN_PATH %{buildroot}/usr/bin/24bit
+          install -m644 $PWD/packaging/24bit.desktop %{buildroot}/usr/share/applications/24bit.desktop
+          install -m644 $PWD/assets/icon.png %{buildroot}/usr/share/icons/hicolor/512x512/apps/24bit.png
+          %files
+          /usr/bin/24bit
+          /usr/share/applications/24bit.desktop
+          /usr/share/icons/hicolor/512x512/apps/24bit.png
+          EOF
+          rpmbuild --define "_topdir $RPMROOT" -bb "$RPMROOT/SPECS/24bit.spec"
+          cp "$RPMROOT"/RPMS/x86_64/*.rpm dist/
+
+          # --- AppImage
+          APPDIR="$PWD/dist/24bit.AppDir"
+          stage "$APPDIR"
+          cp assets/icon.png "$APPDIR/24bit.png"
+          cp packaging/24bit.desktop "$APPDIR/24bit.desktop"
+          cat > "$APPDIR/AppRun" <<'APPRUN'
+          #!/bin/sh
+          HERE=$(dirname "$(readlink -f "$0")")
+          exec "$HERE/usr/bin/24bit" "$@"
+          APPRUN
+          chmod +x "$APPDIR/AppRun"
+          curl -fsSL -o /tmp/appimagetool \
+            https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage
+          chmod +x /tmp/appimagetool
+          # The GitHub runner has no FUSE, so extract and run instead.
+          ARCH=x86_64 /tmp/appimagetool --appimage-extract-and-run \
+            "$APPDIR" "dist/24bit-${VERSION}-x86_64.AppImage"
+
+      # -------------------------------------------------------------- Windows
+      - name: Package (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $version = $env:GITHUB_REF_NAME -replace '^v', ''
+          if (-not $version) { $version = "0.0.0" }
+          New-Item -ItemType Directory -Force -Path dist\24bit | Out-Null
+          Copy-Item "target\${{ matrix.target }}\release\$env:BIN.exe" "dist\24bit\24bit.exe"
+          Copy-Item "assets\icon.png" "dist\24bit\icon.png"
+          Copy-Item "README.md" "dist\24bit\README.md"
+          Compress-Archive -Path dist\24bit -DestinationPath "dist\24bit-${{ matrix.name }}-$version.zip" -Force
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.name }}
+          path: dist/*.zip dist/*.deb dist/*.rpm dist/*.AppImage
+          if-no-files-found: error
+
+  publish:
+    name: publish
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+      - name: List artefacts
+        run: ls -lh artifacts
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/*
+          generate_release_notes: true
+          draft: false
+          # A tag with a "-" is a pre-release, which keeps "latest" pointing at
+          # something users should actually install.
+          prerelease: ${{ contains(github.ref_name, '-') }}

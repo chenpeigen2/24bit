@@ -124,3 +124,16 @@ export const ProgressRing = ({ fraction }: { fraction: number }) => {
     </span>
   );
 };
+
+export const SunIcon = ({ size = 13 }: Props) => (
+  <Svg size={size}>
+    <circle cx="12" cy="12" r="4" />
+    <path d="M12 2.5v2.2M12 19.3v2.2M2.5 12h2.2M19.3 12h2.2M5.4 5.4l1.6 1.6M17 17l1.6 1.6M18.6 5.4L17 7M7 17l-1.6 1.6" />
+  </Svg>
+);
+
+export const MoonIcon = ({ size = 13 }: Props) => (
+  <Svg size={size}>
+    <path d="M20 14.5A8.5 8.5 0 019.5 4a8.5 8.5 0 1010.5 10.5z" />
+  </Svg>
+);

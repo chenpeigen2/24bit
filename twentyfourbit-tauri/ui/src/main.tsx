@@ -1,7 +1,32 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import App from "./App";
+import { demoSeed } from "./lib/api";
+import { applyAccent, applyAmbient } from "./lib/theme";
 import "./styles.css";
+
+// Paint the theme before the first frame. Doing this in an effect leaves one
+// frame with the neutral accent, which reads as a flash of grey.
+if (demoSeed) {
+  applyAccent(demoSeed.accent);
+  applyAmbient(demoSeed.cover);
+} else {
+  applyAccent();
+}
+
+const storedTheme = localStorage.getItem("24bit.theme");
+const forcedTheme = new URLSearchParams(location.search).get("theme");
+if (forcedTheme === "light" || forcedTheme === "dark") {
+  document.documentElement.dataset.theme = forcedTheme;
+} else if (storedTheme === "light" || storedTheme === "dark") {
+  document.documentElement.dataset.theme = storedTheme;
+} else {
+  document.documentElement.dataset.theme = window.matchMedia(
+    "(prefers-color-scheme: dark)",
+  ).matches
+    ? "dark"
+    : "light";
+}
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>

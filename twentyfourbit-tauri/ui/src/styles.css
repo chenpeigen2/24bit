@@ -14,6 +14,7 @@
 
 :root {
   /* warm ink */
+  --paper: rgba(253, 250, 249, 0.74);
   --ink: #1a1520;
   --ink-2: rgba(26, 21, 32, 0.60);
   --ink-3: rgba(26, 21, 32, 0.40);
@@ -77,6 +78,58 @@ body {
 button { font: inherit; color: inherit; background: none; border: 0; cursor: default; }
 input { font: inherit; color: inherit; }
 
+
+/* ============================================================== dark theme */
+
+/* Warm charcoal, not blue-black: the same candlelight register as the light
+   theme, just after sunset. Surfaces lift by lightness, the way the OS does it. */
+:root[data-theme="dark"] {
+  --paper: rgba(22, 18, 24, 0.90);
+
+  --ink: #f6f1ec;
+  --ink-2: rgba(246, 241, 236, 0.68);
+  --ink-3: rgba(246, 241, 236, 0.46);
+  --ink-4: rgba(246, 241, 236, 0.28);
+
+  --chrome: rgba(38, 32, 42, 0.62);
+  --solid: #221d28;
+  --fill: rgba(255, 250, 245, 0.055);
+  --fill-2: rgba(255, 250, 245, 0.10);
+  --hairline: rgba(255, 250, 245, 0.09);
+  --hairline-2: rgba(255, 250, 245, 0.20);
+
+  --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.34), 0 0 0 0.5px rgba(0, 0, 0, 0.30);
+  --shadow-2: 0 6px 22px rgba(0, 0, 0, 0.42), 0 1px 3px rgba(0, 0, 0, 0.30);
+  --shadow-3: 0 20px 48px -12px rgba(0, 0, 0, 0.64), 0 4px 12px rgba(0, 0, 0, 0.36);
+}
+
+/* In the dark the ambient can be much stronger: it is the light source. */
+:root[data-theme="dark"] body.has-art .ambient-far { opacity: 0.26; }
+:root[data-theme="dark"] body.has-art .ambient-near { opacity: 0.14; }
+:root[data-theme="dark"] body::after { opacity: 0.20; }
+
+:root[data-theme="dark"] .row.is-selected:not(.is-playing) {
+  background: rgba(255, 250, 245, 0.055);
+}
+:root[data-theme="dark"] .icon-btn.solid { background: var(--ink); color: #1a1520; }
+:root[data-theme="dark"] .icon-btn.solid:hover { background: #fff; color: #1a1520; }
+:root[data-theme="dark"] .ctl-play { background: var(--ink); color: #1a1520; }
+:root[data-theme="dark"] .ctl-play:hover { background: #fff; }
+:root[data-theme="dark"] .btn-primary { color: #1a1520; }
+:root[data-theme="dark"] .card-row:hover { background: rgba(255, 250, 245, 0.03); }
+:root[data-theme="dark"] .art::after {
+  background: linear-gradient(168deg, rgba(255, 255, 255, 0.10), transparent 44%);
+}
+:root[data-theme="dark"] .toast { color: #f2ece6; background: rgba(48, 40, 52, 0.94); }
+:root[data-theme="dark"] .list::-webkit-scrollbar-thumb {
+  background: rgba(255, 250, 245, 0.18);
+  background-clip: content-box;
+}
+:root[data-theme="dark"] .list::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 250, 245, 0.30);
+  background-clip: content-box;
+}
+
 /* ============================================================ atmosphere */
 
 /* The cover, blurred far past recognition. Two layers: a wide one for the
@@ -128,7 +181,7 @@ body::after {
     "side main"
     "side player"
     "side status";
-  background: rgba(253, 250, 249, 0.74);
+  background: var(--paper);
 }
 
 /* =============================================================== sidebar */
@@ -243,6 +296,36 @@ body::after {
   display: flex;
   flex-direction: column;
   padding: 0 var(--gutter);
+  /* A wide window should not stretch the reading column. Capping and centring
+     is what makes a sparse result list look deliberate instead of abandoned. */
+  max-width: 1080px;
+  margin: 0 auto;
+}
+
+/* the theme switch is a segmented pair, not a checkbox */
+.theme-switch {
+  display: inline-flex;
+  padding: 2px;
+  border-radius: 8px;
+  background: var(--fill);
+  gap: 2px;
+}
+.theme-switch button {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  height: 24px;
+  padding: 0 10px;
+  border-radius: 6px;
+  font-size: 11.5px;
+  font-weight: 550;
+  color: var(--ink-3);
+  transition: background 180ms var(--ease), color 180ms var(--ease);
+}
+.theme-switch button.is-active {
+  background: var(--solid);
+  color: var(--ink);
+  box-shadow: var(--shadow-1);
 }
 
 .page-head { padding: var(--s6) 0 var(--s3); }
@@ -941,3 +1024,11 @@ input,
     animation: none !important;
   }
 }
+
+/* a missing audio device is a fact about the machine, not a failure of the
+   click — it belongs in the status strip, quietly */
+.status-error {
+  color: #b0424a;
+  font-weight: 550;
+}
+:root[data-theme="dark"] .status-error { color: #e08a90; }

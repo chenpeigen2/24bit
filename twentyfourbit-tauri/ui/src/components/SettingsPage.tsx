@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useState } from "react";
 import { api } from "../lib/api";
 import type { Settings } from "../lib/types";
+import type { Theme } from "../hooks/useTheme";
+import { MoonIcon, SunIcon } from "./Icons";
 
 interface Props {
   quality: string;
@@ -8,6 +10,8 @@ interface Props {
   onToast: (text: string, kind?: "ok" | "err") => void;
   account: string | null;
   onAccount: (name: string) => void;
+  theme: Theme;
+  onTheme: (theme: Theme) => void;
 }
 
 /** Quality, account and storage. A destructive action arms before it fires. */
@@ -17,6 +21,8 @@ export const SettingsPage = ({
   onToast,
   account,
   onAccount,
+  theme,
+  onTheme,
 }: Props) => {
   const [settings, setSettings] = useState<Settings | null>(null);
   const [armed, setArmed] = useState(false);
@@ -50,6 +56,34 @@ export const SettingsPage = ({
       </header>
 
       <div className="settings">
+        <div className="section">
+          <h3>外观</h3>
+          <div className="card">
+            <div className="card-row">
+              <div className="grow">
+                <div className="title">主题</div>
+                <div className="detail">默认跟随系统</div>
+              </div>
+              <div className="theme-switch">
+                <button
+                  className={theme === "light" ? "is-active" : ""}
+                  onClick={() => onTheme("light")}
+                >
+                  <SunIcon size={12} />
+                  浅色
+                </button>
+                <button
+                  className={theme === "dark" ? "is-active" : ""}
+                  onClick={() => onTheme("dark")}
+                >
+                  <MoonIcon size={12} />
+                  深色
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+
         <div className="section">
           <h3>音质偏好</h3>
           <div className="card">

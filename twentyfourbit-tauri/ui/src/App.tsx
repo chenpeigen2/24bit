@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useState } from "react";
 import { api, demoSeed, onProgress } from "./lib/api";
 import { bytes } from "./lib/format";
-import { applyAccent, applyAmbient } from "./lib/theme";
+import { applyAmbient } from "./lib/theme";
 import type { LibraryRow, Page, SearchItem } from "./lib/types";
 import { usePlayer } from "./hooks/usePlayer";
 import { useToast } from "./hooks/useToast";
+import { useTheme } from "./hooks/useTheme";
 import { Sidebar } from "./components/Sidebar";
 import { SearchPage } from "./components/SearchPage";
 import { ChartsPage } from "./components/ChartsPage";
@@ -20,6 +21,7 @@ const initialPage = (): Page => {
 
 export default function App() {
   const { toasts, push } = useToast();
+  const { theme, setTheme } = useTheme();
   const [page, setPage] = useState<Page>(initialPage);
   const [quality, setQuality] = useState("master");
   const [account, setAccount] = useState<string | null>(null);
@@ -47,11 +49,9 @@ export default function App() {
       } catch {
         setAccount(null);
       }
-      if (demoSeed) {
-        applyAccent(demoSeed.accent);
-        applyAmbient(demoSeed.cover);
-      } else {
-        applyAccent();
+      // The first paint already carries the accent (see main.tsx); this only
+      // fills in an empty state when nothing is loaded.
+      if (!demoSeed) {
         applyAmbient(null);
       }
     })();
@@ -219,6 +219,8 @@ export default function App() {
               onToast={push}
               account={account}
               onAccount={setAccount}
+              theme={theme}
+              onTheme={setTheme}
             />
           )}
         </main>
@@ -238,6 +240,9 @@ export default function App() {
 
         <div className="status">
           {status ? <span className="dot" /> : null}
+          {!player.snapshot.engine_ready && (
+            <span className="status-error">没有可用的音频输出设备</span>
+          )}
           <span>{status}</span>
           <span className="grow" />
           <span className="ver">v0.1.0</span>

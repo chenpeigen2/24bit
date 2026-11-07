@@ -52,6 +52,8 @@ export interface PlayerSnapshot {
   artist: string | null;
   quality: string | null;
   cover: string | null;
+  /** False when the audio engine could not start. */
+  engine_ready: boolean;
 }
 
 export interface ProgressPayload {

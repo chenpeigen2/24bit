@@ -11,11 +11,14 @@ const EMPTY: PlayerSnapshot = {
   artist: null,
   quality: null,
   cover: null,
+  engine_ready: true,
 };
 
 export interface PlayerApi {
   snapshot: PlayerSnapshot;
   playingId: string | null;
+  /** Set while a track is being fetched and handed to the engine. */
+  pendingPlay: string | null;
   lyrics: LyricLine[];
   playing: boolean;
   toggle: () => void;
@@ -55,10 +58,19 @@ export const usePlayer = (
           artist: demo.player,
           quality: "至臻母带",
           cover: demoSeed?.cover ?? null,
+          engine_ready: true,
         }
       : EMPTY,
   );
   const [playingId, setPlayingId] = useState<string | null>(demo?.id ?? null);
+  /**
+   * What the user just asked for, before the engine confirms it.
+   *
+   * The transport is polled at 10Hz, so without this the player bar sits
+   * unchanged for a beat after a click — long enough to read as "nothing
+   * happened".
+   */
+  const [pendingPlay, setPendingPlay] = useState<string | null>(null);
   const [lyrics, setLyrics] = useState<LyricLine[]>(demoSeed?.lyrics ?? []);
   const [volume, setVolumeState] = useState(1);
   const [muted, setMuted] = useState(false);
@@ -85,7 +97,20 @@ export const usePlayer = (
       source.current = list;
       queue.current = list.map((r) => r.id);
       queueIndex.current = list.findIndex((r) => r.id === item.id);
+
       setPlayingId(item.id);
+      setPendingPlay(item.id);
+      setLyrics([]);
+      // Show the selection straight away; the engine will confirm.
+      setSnapshot((prev) => ({
+        ...prev,
+        title: item.name,
+        artist: item.player,
+        cover: item.cover || null,
+        playing: true,
+        position: 0,
+        duration: 0,
+      }));
 
       try {
         const prepared = await api.prepare(item.id, quality);
@@ -95,6 +120,9 @@ export const usePlayer = (
       } catch (e) {
         onError(String(e));
         setPlayingId(null);
+        setSnapshot((prev) => ({ ...prev, playing: false }));
+      } finally {
+        setPendingPlay(null);
       }
     },
     [playingId, quality, onError, refreshGlow],
@@ -129,6 +157,16 @@ export const usePlayer = (
 
       queueIndex.current = next;
       setPlayingId(id);
+      setPendingPlay(id);
+      setSnapshot((prev) => ({
+        ...prev,
+        title: item.name,
+        artist: item.player,
+        cover: item.cover || null,
+        playing: true,
+        position: 0,
+        duration: 0,
+      }));
       try {
         const prepared = await api.prepare(id, quality);
         setLyrics(prepared.lyrics ?? []);
@@ -136,6 +174,8 @@ export const usePlayer = (
         refreshGlow(item.cover || null);
       } catch (e) {
         onError(String(e));
+      } finally {
+        setPendingPlay(null);
       }
     },
     [quality, onError, refreshGlow],
@@ -159,6 +199,7 @@ export const usePlayer = (
   return {
     snapshot,
     playingId,
+    pendingPlay,
     lyrics,
     playing: snapshot.playing,
     toggle: () => void api.toggle(),

@@ -42,6 +42,9 @@ struct PlayerSnapshot {
     cover: Option<String>,
     size: Option<String>,
     album: Option<String>,
+    /// False when the audio engine could not start; the UI says so instead of
+    /// showing a play button that can never do anything.
+    engine_ready: bool,
 }
 
 #[derive(Serialize)]
@@ -534,7 +537,13 @@ fn main() {
             let state = AppState {
                 client,
                 cache: Cache::default_cache(),
-                engine: Mutex::new(Engine::start().ok()),
+                engine: Mutex::new(match Engine::start() {
+                    Ok(engine) => Some(engine),
+                    Err(e) => {
+                        tracing::error!("audio engine unavailable: {e}");
+                        None
+                    }
+                }),
                 current: Mutex::new(None),
                 quality: Mutex::new(cfg.quality),
             };
@@ -543,42 +552,58 @@ fn main() {
             // Push the transport state to the frontend on a timer. Polling beats
             // plumbing callbacks through the audio callback thread, and 10Hz is
             // enough for a progress bar the eye reads as continuous.
+            //
+            // Emitting unconditionally matters: an earlier version skipped the
+            // emit whenever the audio engine was unavailable, which left the
+            // window with no transport state at all and made every control look
+            // dead.
             let handle = app.handle().clone();
-            std::thread::spawn(move || loop {
-                std::thread::sleep(std::time::Duration::from_millis(100));
-                let state = handle.state::<AppState>();
-                let snapshot = match state.engine() {
-                    Some(engine) => {
-                        let snap = engine.snapshot();
-                        let detail = state.current.lock().unwrap().clone();
-                        match snap.transport {
-                            Some(t) => PlayerSnapshot {
-                                playing: t.phase() == twentyfourbit_player::Phase::Playing,
-                                position: t.position().as_millis() as u64,
-                                duration: t.duration().as_millis() as u64,
-                                title: detail.as_ref().map(|d| d.name.clone()),
-                                artist: detail.as_ref().map(|d| d.player.clone()),
-                                quality: detail.as_ref().map(|d| d.quality.clone()),
-                                cover: detail.as_ref().map(|d| d.cover.clone()),
-                                size: detail.as_ref().map(|d| d.size.clone()),
-                                album: detail.as_ref().map(|d| d.album.clone()),
-                            },
-                            None => PlayerSnapshot {
-                                playing: false,
-                                position: 0,
-                                duration: 0,
-                                title: None,
-                                artist: None,
-                                quality: None,
-                                cover: None,
-                                size: None,
-                                album: None,
-                            },
-                        }
+            std::thread::spawn(move || {
+                let mut last_ready: Option<bool> = None;
+
+                loop {
+                    std::thread::sleep(std::time::Duration::from_millis(100));
+
+                    let state = handle.state::<AppState>();
+                    let engine = state.engine();
+                    let ready = engine.is_some();
+
+                    if last_ready != Some(ready) {
+                        last_ready = Some(ready);
+                        tracing::info!(engine_ready = ready, "transport state publishing");
                     }
-                    None => continue,
-                };
-                let _ = handle.emit("player", snapshot);
+
+                    let detail = state.current.lock().unwrap().clone();
+
+                    let snapshot = match engine.as_ref().and_then(|e| e.snapshot().transport) {
+                        Some(t) => PlayerSnapshot {
+                            playing: t.phase() == twentyfourbit_player::Phase::Playing,
+                            position: t.position().as_millis() as u64,
+                            duration: t.duration().as_millis() as u64,
+                            title: detail.as_ref().map(|d| d.name.clone()),
+                            artist: detail.as_ref().map(|d| d.player.clone()),
+                            quality: detail.as_ref().map(|d| d.quality.clone()),
+                            cover: detail.as_ref().map(|d| d.cover.clone()),
+                            size: detail.as_ref().map(|d| d.size.clone()),
+                            album: detail.as_ref().map(|d| d.album.clone()),
+                            engine_ready: ready,
+                        },
+                        None => PlayerSnapshot {
+                            playing: false,
+                            position: 0,
+                            duration: 0,
+                            title: detail.as_ref().map(|d| d.name.clone()),
+                            artist: detail.as_ref().map(|d| d.player.clone()),
+                            quality: detail.as_ref().map(|d| d.quality.clone()),
+                            cover: detail.as_ref().map(|d| d.cover.clone()),
+                            size: detail.as_ref().map(|d| d.size.clone()),
+                            album: detail.as_ref().map(|d| d.album.clone()),
+                            engine_ready: ready,
+                        },
+                    };
+
+                    let _ = handle.emit("player", snapshot);
+                }
             });
 
             Ok(())

@@ -4,7 +4,7 @@
   "version": "0.1.0",
   "identifier": "net.twentyfourbit.client",
   "build": {
-    "frontendDist": "ui"
+    "frontendDist": "ui/dist"
   },
   "app": {
     "withGlobalTauri": true,
@@ -19,7 +19,9 @@
         "titleBarStyle": "Overlay",
         "hiddenTitle": true,
         "windowEffects": {
-          "effects": ["underWindowBackground"],
+          "effects": [
+            "underWindowBackground"
+          ],
           "state": "followsWindowActiveState"
         }
       }
@@ -31,6 +33,9 @@
   "bundle": {
     "active": true,
     "targets": "all",
-    "icon": ["icons/icon.icns", "icons/icon.png"]
+    "icon": [
+      "icons/icon.icns",
+      "icons/icon.png"
+    ]
   }
 }

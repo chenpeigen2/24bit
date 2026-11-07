@@ -40,12 +40,17 @@ struct PlayerSnapshot {
     artist: Option<String>,
     quality: Option<String>,
     cover: Option<String>,
+    size: Option<String>,
+    album: Option<String>,
 }
 
 #[derive(Serialize)]
 struct Prepared {
     id: String,
     lyrics: Vec<twentyfourbit_core::lyrics::LyricLine>,
+    /// Dominant colour of the artwork as `[r, g, b]`, used to tint the
+    /// interface while this track plays.
+    accent: [u8; 3],
 }
 
 #[derive(Serialize)]
@@ -119,9 +124,10 @@ async fn prepare(
         engine.set_volume(1.0);
     }
 
+    let accent = cover_accent(&detail.cover).unwrap_or([70, 70, 78]);
     *state.current.lock().unwrap() = Some(detail);
 
-    Ok(Prepared { id, lyrics })
+    Ok(Prepared { id, lyrics, accent })
 }
 
 #[tauri::command]
@@ -248,6 +254,107 @@ async fn play_file(state: State<'_, AppState>, path: String) -> Result<(), Strin
     Ok(())
 }
 
+/// Search a specific page. The site returns 30 rows per page, so the UI needs a
+/// way to ask for more without losing what it already has.
+#[tauri::command]
+async fn search_page(
+    state: State<'_, AppState>,
+    keyword: String,
+    page: u32,
+) -> Result<Vec<SearchItem>, String> {
+    state
+        .client
+        .search_page(&keyword, page)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn login(
+    state: State<'_, AppState>,
+    account: String,
+    password: String,
+) -> Result<String, String> {
+    let token = state
+        .client
+        .login(&account, &password)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let mut cfg = twentyfourbit_core::Config::load().unwrap_or_default();
+    cfg.token = Some(token);
+    cfg.save().map_err(|e| e.to_string())?;
+    Ok(account)
+}
+
+#[tauri::command]
+async fn whoami(state: State<'_, AppState>) -> Result<Option<String>, String> {
+    match state.client.whoami().await {
+        Ok(account) => Ok(account.map(|a| a.account)),
+        // A rejected token is not an error the UI needs to shout about; it just
+        // means "not signed in".
+        Err(twentyfourbit_core::Error::InvalidToken { .. }) => Ok(None),
+        Err(e) => Err(e.to_string()),
+    }
+}
+
+/// Delete one cached track, both the audio and its metadata sidecar.
+#[tauri::command]
+async fn delete_track(state: State<'_, AppState>, path: String) -> Result<(), String> {
+    let path = std::path::PathBuf::from(path);
+    let cache_root = state.cache.root().to_path_buf();
+
+    // Only ever delete inside the cache. A rendered path is not a licence to
+    // hand the filesystem arbitrary input.
+    if !path.starts_with(&cache_root) {
+        return Err("refusing to delete a file outside the cache".into());
+    }
+
+    std::fs::remove_file(&path).map_err(|e| e.to_string())?;
+    let _ = std::fs::remove_file(path.with_extension("json"));
+    Ok(())
+}
+
+/// Show a cached file in Finder / Explorer / the desktop file manager.
+#[tauri::command]
+async fn reveal(state: State<'_, AppState>, path: String) -> Result<(), String> {
+    let path = std::path::PathBuf::from(&path);
+    if !path.starts_with(state.cache.root()) {
+        return Err("refusing to reveal a file outside the cache".into());
+    }
+    if !path.exists() {
+        return Err("that file is no longer cached".into());
+    }
+
+    #[cfg(target_os = "macos")]
+    let status = std::process::Command::new("open")
+        .args(["-R", &path.display().to_string()])
+        .status();
+
+    #[cfg(target_os = "windows")]
+    let status = std::process::Command::new("explorer")
+        .args(["/select,", &path.display().to_string()])
+        .status();
+
+    #[cfg(all(unix, not(target_os = "macos")))]
+    let status = std::process::Command::new("xdg-open")
+        .arg(path.parent().unwrap_or(std::path::Path::new(".")))
+        .status();
+
+    status.map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// Mute or unmute, returning the level that is now in effect.
+#[tauri::command]
+async fn mute(state: State<'_, AppState>, muted: bool, restore: f32) -> Result<f32, String> {
+    let level = if muted { 0.0 } else { restore.clamp(0.0, 1.0) };
+    if let Some(engine) = state.engine() {
+        engine.set_volume(level);
+    }
+    Ok(level)
+}
+
 // ------------------------------------------------------------------ helpers
 
 fn parse_quality(value: &str) -> Quality {
@@ -305,6 +412,85 @@ fn scan_library(root: &std::path::Path) -> Vec<LibraryRow> {
         }
     }
     out
+}
+
+/// Pull a representative colour out of a cover image.
+///
+/// Not the arithmetic mean — that turns most artwork into grey mud. Instead the
+/// image is reduced to a small grid, near-black and near-white cells are
+/// dropped, and the remaining cells are averaged in a way that favours
+/// saturated pixels, because those are what a person perceives as "the colour"
+/// of a cover.
+fn cover_accent(url: &str) -> Option<[u8; 3]> {
+    if url.is_empty() {
+        return None;
+    }
+
+    let bytes = reqwest::blocking::Client::builder()
+        .timeout(std::time::Duration::from_secs(8))
+        .build()
+        .ok()?
+        .get(url)
+        .send()
+        .ok()?
+        .bytes()
+        .ok()?;
+
+    let img = image::load_from_memory(&bytes).ok()?;
+    let small = img.resize_exact(24, 24, image::imageops::FilterType::Triangle);
+    let rgba = small.to_rgba8();
+
+    let mut sum = [0f32; 3];
+    let mut weight = 0f32;
+
+    for pixel in rgba.pixels() {
+        let [r, g, b, a] = pixel.0;
+        if a < 128 {
+            continue;
+        }
+        let (rf, gf, bf) = (r as f32, g as f32, b as f32);
+        let max = rf.max(gf).max(bf);
+        let min = rf.min(gf).min(bf);
+
+        // Skip what reads as background rather than subject.
+        if max < 28.0 || min > 232.0 {
+            continue;
+        }
+
+        // Saturation is the signal: a red jacket matters more than grey wall.
+        let saturation = if max > 0.0 { (max - min) / max } else { 0.0 };
+        let w = 0.25 + saturation * 0.75;
+
+        sum[0] += rf * w;
+        sum[1] += gf * w;
+        sum[2] += bf * w;
+        weight += w;
+    }
+
+    if weight <= 0.0 {
+        return None;
+    }
+
+    let mut out = [
+        (sum[0] / weight) as u8,
+        (sum[1] / weight) as u8,
+        (sum[2] / weight) as u8,
+    ];
+
+    // Nudge toward a usable UI accent: too dark reads as a shadow, too pale
+    // disappears on a light chrome.
+    let lum = (0.2126 * out[0] as f32 + 0.7152 * out[1] as f32 + 0.0722 * out[2] as f32) / 255.0;
+    if lum < 0.22 {
+        for c in &mut out {
+            *c = (*c as f32 * 1.7).min(255.0) as u8;
+        }
+    } else if lum > 0.82 {
+        for c in &mut out {
+            *c = (*c as f32 * 0.82) as u8;
+        }
+    }
+
+    Some(out)
 }
 
 fn human_bytes(bytes: u64) -> String {
@@ -374,6 +560,8 @@ fn main() {
                                 artist: detail.as_ref().map(|d| d.player.clone()),
                                 quality: detail.as_ref().map(|d| d.quality.clone()),
                                 cover: detail.as_ref().map(|d| d.cover.clone()),
+                                size: detail.as_ref().map(|d| d.size.clone()),
+                                album: detail.as_ref().map(|d| d.album.clone()),
                             },
                             None => PlayerSnapshot {
                                 playing: false,
@@ -383,6 +571,8 @@ fn main() {
                                 artist: None,
                                 quality: None,
                                 cover: None,
+                                size: None,
+                                album: None,
                             },
                         }
                     }
@@ -394,8 +584,9 @@ fn main() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
-            search, charts, prepare, export, library, clear_cache, settings, set_quality, toggle,
-            pause, restart, seek, set_volume, play_file
+            search, search_page, charts, prepare, export, library, clear_cache, settings,
+            set_quality, toggle, pause, restart, seek, set_volume, play_file, login, whoami,
+            delete_track, reveal, mute
         ])
         .run(tauri::generate_context!())
         .expect("error while running 24bit");

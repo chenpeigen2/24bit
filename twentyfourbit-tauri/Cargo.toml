@@ -19,3 +19,8 @@ serde_json.workspace = true
 tokio.workspace = true
 tracing.workspace = true
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+# Cover colour extraction: the webview cannot read pixels from a CDN image
+# (canvas is tainted without CORS headers), so the accent colour is computed
+# here from the actual bytes.
+reqwest = { workspace = true, features = ["blocking"] }
+image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }

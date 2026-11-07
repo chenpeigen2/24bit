@@ -86,7 +86,16 @@ pub struct App {
 
     quality: Quality,
     progress: Option<(u64, Option<u64>)>,
-    status: Option<(String, bool)>,
+    /// The track whose download is in flight, so its row can show the progress
+    /// instead of a play button.
+    pending: Option<String>,
+    /// The track the engine is currently playing, so its row can say so.
+    playing_id: Option<String>,
+    /// A search is in flight. Until it lands, "no results" would be a lie.
+    searching: bool,
+    toast: crate::ui_state::Toast,
+    volume: crate::ui_state::Volume,
+    clear_confirm: crate::ui_state::Confirm,
 
     now_playing: Option<TrackDetail>,
     lyrics: crate::lyrics::Lyrics,
@@ -97,6 +106,17 @@ pub struct App {
 
     login_account: String,
     login_password: String,
+
+    /// Debug helpers, driven by environment variables so the release build is
+    /// unchanged: capture the real window to a PNG, and/or run a search on
+    /// startup.
+    snapshot_path: Option<PathBuf>,
+    snapshot_after: std::time::Duration,
+    demo_query: Option<String>,
+    demo_play: bool,
+    started_at: std::time::Instant,
+    demo_dispatched: bool,
+    snapshot_taken: bool,
 }
 
 impl App {
@@ -158,7 +178,12 @@ impl App {
             account: None,
             quality,
             progress: None,
-            status: None,
+            pending: None,
+            playing_id: None,
+            searching: false,
+            toast: crate::ui_state::Toast::new(),
+            volume: crate::ui_state::Volume::new(),
+            clear_confirm: crate::ui_state::Confirm::new(),
             now_playing: None,
             lyrics: crate::lyrics::Lyrics::default(),
             show_lyrics: true,
@@ -167,6 +192,19 @@ impl App {
             font_warning,
             login_account: String::new(),
             login_password: String::new(),
+            snapshot_path: std::env::var_os("TWENTYFOURBIT_SNAPSHOT").map(PathBuf::from),
+            snapshot_after: std::time::Duration::from_millis(
+                std::env::var("TWENTYFOURBIT_SNAPSHOT_AFTER")
+                    .ok()
+                    .and_then(|v| v.parse::<u64>().ok())
+                    .unwrap_or(8)
+                    * 100,
+            ),
+            demo_query: std::env::var("TWENTYFOURBIT_DEMO_QUERY").ok(),
+            demo_play: std::env::var_os("TWENTYFOURBIT_DEMO_PLAY").is_some(),
+            started_at: std::time::Instant::now(),
+            demo_dispatched: false,
+            snapshot_taken: false,
         }
     }
 
@@ -182,20 +220,29 @@ impl App {
                 Event::Search(items) => {
                     self.results = items;
                     self.busy = None;
+                    self.searching = false;
                 }
                 Event::Charts(charts) => {
                     self.charts = charts;
                     self.busy = None;
                 }
-                Event::Prepared { path, detail, .. } => {
+                Event::Prepared { id, path, detail } => {
                     self.busy = None;
                     self.progress = None;
+                    self.pending = None;
+                    self.playing_id = Some(id);
                     self.adopt_track(detail, path);
                 }
                 Event::Exported { path, title } => {
                     self.busy = None;
                     self.progress = None;
-                    self.status = Some((format!("已保存 {title} · {}", path.display()), false));
+                    self.pending = None;
+                    self.toast.show(
+                        format!("已保存 {title}"),
+                        false,
+                        self.now(),
+                    );
+                    let _ = path;
                 }
                 Event::Progress { done, total } => self.progress = Some((done, total)),
                 Event::Library(rows) => {
@@ -210,7 +257,9 @@ impl App {
                 Event::Error(message) => {
                     self.busy = None;
                     self.progress = None;
-                    self.status = Some((message, true));
+                    self.pending = None;
+                    self.searching = false;
+                    self.toast.show(message, true, self.now());
                 }
             }
         }
@@ -229,12 +278,14 @@ impl App {
         self.show_lyrics = !self.lyrics.is_empty();
 
         self.covers.request(&detail.cover);
-        self.status = Some((format!("正在播放 {}", detail.name), false));
 
         match &self.engine {
             Some(engine) if path.exists() => engine.play(path),
             Some(_) => {}
-            None => self.status = Some(("没有可用的音频设备".into(), true)),
+            None => {
+                self.toast
+                    .show("没有可用的音频设备".to_owned(), true, self.now());
+            }
         }
 
         self.now_playing = Some(detail);
@@ -292,6 +343,59 @@ impl App {
     /// Title of the loaded track, if any.
     pub fn now_playing_title(&self) -> Option<&str> {
         self.now_playing.as_ref().map(|d| d.name.as_str())
+    }
+
+    /// Global shortcuts.
+    ///
+    /// Only when no text field has focus, otherwise Space would type a space and
+    /// "/" would be swallowed before reaching the search box.
+    fn keyboard(&mut self, ctx: &egui::Context) {
+        if ctx.egui_wants_keyboard_input() {
+            return;
+        }
+
+        let (space, slash, escape) = ctx.input(|i| {
+            (
+                i.key_pressed(egui::Key::Space),
+                i.key_pressed(egui::Key::Slash),
+                i.key_pressed(egui::Key::Escape),
+            )
+        });
+
+        if space {
+            let playing = self
+                .engine
+                .as_ref()
+                .and_then(|e| e.snapshot().transport)
+                .map(|t| t.phase() == Phase::Playing)
+                .unwrap_or(false);
+            if let Some(engine) = &self.engine {
+                if playing {
+                    engine.pause();
+                    self.playing_id = None;
+                } else {
+                    engine.resume();
+                }
+            }
+        }
+
+        if slash {
+            self.set_page(Page::Search);
+        }
+
+        if escape {
+            self.clear_confirm.cancel();
+            if !self.query.is_empty() {
+                self.query.clear();
+                self.last_query.clear();
+                self.results.clear();
+            }
+        }
+    }
+
+    /// Seconds since the app started, used as the clock for time-based UI rules.
+    fn now(&self) -> f64 {
+        self.started_at.elapsed().as_secs_f64()
     }
 
     fn prepare(&self, id: &str) {
@@ -498,38 +602,44 @@ impl App {
 
                 if let Some(what) = self.busy {
                     // A rotating arc, because a static "loading…" reads as stuck
-                    // when the site takes several seconds to answer.
+                    // when a download takes a while.
                     spinner(&ui.painter().clone(), Pos2::new(x + 5.0, y), 5.0, TEXT_MUTED, ui.input(|i| i.time));
                     x += 16.0;
 
-                    let text = match self.progress {
-                        Some((done, Some(total))) if total > 0 => format!(
-                            "{} · {} / {}",
-                            what,
-                            format_bytes(done),
-                            format_bytes(total)
+                    let (label, fraction) = match self.progress {
+                        Some((done, Some(total))) if total > 0 => (
+                            format!(
+                                "{} · {} / {} · {}%",
+                                what,
+                                format_bytes(done),
+                                format_bytes(total),
+                                (done as f64 / total as f64 * 100.0).round() as u32
+                            ),
+                            Some(done as f32 / total as f32),
                         ),
-                        Some((done, None)) => format!("{what} · {}", format_bytes(done)),
-                        _ => format!("{what}…"),
+                        Some((done, None)) if done > 0 => {
+                            (format!("{what} · {}", format_bytes(done)), None)
+                        }
+                        _ => (format!("{what}…"), None),
                     };
+
                     ui.painter().text(
                         Pos2::new(x, y),
                         Align2::LEFT_CENTER,
-                        text,
+                        label,
                         FontId::proportional(T_FAINT),
                         TEXT_MUTED,
                     );
-                    x += 300.0;
+                    x += 320.0;
 
-                    // A thin progress line makes a long download legible.
-                    if let Some((done, Some(total))) = self.progress {
-                        if total > 0 {
-                            let track = Rect::from_min_max(
-                                Pos2::new(x, y - 1.5),
-                                Pos2::new(x + 160.0, y + 1.5),
-                            );
-                            ui.painter().rect_filled(track, 2.0, BORDER);
-                            let w = 160.0 * (done as f32 / total as f32).clamp(0.0, 1.0);
+                    if let Some(fraction) = fraction {
+                        let track = Rect::from_min_max(
+                            Pos2::new(x, y - 2.0),
+                            Pos2::new(x + 140.0, y + 2.0),
+                        );
+                        ui.painter().rect_filled(track, 2.0, BORDER);
+                        let w = 140.0 * fraction.clamp(0.0, 1.0);
+                        if w > 0.5 {
                             ui.painter().rect_filled(
                                 Rect::from_min_max(track.min, Pos2::new(track.left() + w, track.max.y)),
                                 2.0,
@@ -537,12 +647,12 @@ impl App {
                             );
                         }
                     }
-                } else if let Some((message, is_error)) = &self.status {
-                    let colour = if *is_error { DANGER } else { TEXT_MUTED };
+                } else if let Some(message) = self.toast.current(self.now()) {
+                    let colour = if message.1 { DANGER } else { TEXT_MUTED };
                     ui.painter().text(
                         Pos2::new(x, y),
                         Align2::LEFT_CENTER,
-                        message,
+                        message.0,
                         FontId::proportional(T_FAINT),
                         colour,
                     );
@@ -757,7 +867,7 @@ impl App {
                     Pos2::new(right - 92.0, cy - 8.0),
                     Pos2::new(right, cy + 8.0),
                 );
-                let mut volume = transport.as_ref().map(|t| t.volume()).unwrap_or(1.0);
+                let mut volume = self.volume.visible();
                 let mut vol_ui = ui.new_child(
                     egui::UiBuilder::new()
                         .max_rect(vol_rect)
@@ -772,10 +882,10 @@ impl App {
                 vol_response.widget_info(|| {
                     egui::WidgetInfo::slider(true, volume as f64, "音量")
                 });
-                let changed = vol_response.changed();
-                if changed {
+                if vol_response.changed() {
+                    self.volume.set(volume);
                     if let Some(engine) = &self.engine {
-                        engine.set_volume(volume);
+                        engine.set_volume(self.volume.effective());
                     }
                 }
 
@@ -783,7 +893,28 @@ impl App {
                     Pos2::new(right - 92.0 - 18.0, cy),
                     Vec2::splat(20.0),
                 );
-                icons::paint(ui.painter(), vol_icon, Icon::Volume, TEXT_FAINT);
+                let muted = self.volume.is_muted();
+                let icon_response = ui.interact(
+                    vol_icon,
+                    ui.scope_id().with("volume-icon"),
+                    Sense::click(),
+                );
+                if icon_response.hovered() {
+                    ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+                }
+                if icon_response.clicked() {
+                    self.volume.toggle_mute();
+                    if let Some(engine) = &self.engine {
+                        engine.set_volume(self.volume.effective());
+                    }
+                }
+                icons::paint(
+                    ui.painter(),
+                    vol_icon,
+                    Icon::Volume,
+                    if muted { BORDER_STRONG } else { TEXT_FAINT },
+                );
+                icon_response.on_hover_text(if muted { "取消静音" } else { "静音" });
 
                 // Output format chip, far left of the right cluster.
                 let chip = format!(
@@ -863,7 +994,10 @@ impl App {
             .unwrap_or_default();
         let current = self.lyrics.index_at(position);
 
-        egui::Panel::right("lyrics")
+        // The id carries the width: `Panel` prefers any size stored in window
+        // state over `exact_size`, so a panel that was once draggable keeps its
+        // old width forever. Keying the id on the constant retires stale state.
+        egui::Panel::right("lyrics-304")
             .exact_size(304.0)
             .resizable(false)
             .frame(egui::Frame::NONE.fill(PANEL))
@@ -904,6 +1038,7 @@ impl App {
                                     egui::Label::new(
                                         egui::RichText::new(&line.text).size(size).color(colour),
                                     )
+                                    .wrap()
                                     .sense(Sense::click()),
                                 );
                                 if is_current {
@@ -1006,6 +1141,8 @@ impl App {
                 let q = self.query.trim().to_owned();
                 if !q.is_empty() && q != self.last_query {
                     self.last_query = q.clone();
+                    self.results.clear();
+                    self.searching = true;
                     self.backend.send(Request::Search(q));
                 }
             }
@@ -1014,7 +1151,11 @@ impl App {
         ui.add_space(14.0);
 
         if self.results.is_empty() {
-            empty_state(
+            if self.searching {
+                empty_state_with(ui, Icon::Search, "正在搜索…", "", None, true);
+                return;
+            }
+            let action = empty_state(
                 ui,
                 Icon::Search,
                 if self.last_query.is_empty() {
@@ -1027,7 +1168,13 @@ impl App {
                 } else {
                     "换个写法试试，或者直接浏览本周榜单"
                 },
+                Some(("浏览本周榜单", Icon::Music)),
             );
+            // An empty state that offers the next step beats one that only
+            // explains the current one.
+            if action {
+                self.set_page(Page::Charts);
+            }
             return;
         }
 
@@ -1071,8 +1218,10 @@ impl App {
             });
 
         if let Some(id) = to_prepare {
+            self.pending = Some(id.clone());
             self.prepare(&id);
         } else if let Some(id) = to_export {
+            self.pending = Some(id.clone());
             self.backend.send(Request::Export {
                 id,
                 quality: self.quality,
@@ -1082,7 +1231,7 @@ impl App {
     }
 
     fn result_row(&mut self, ui: &mut egui::Ui, item: &SearchItem, index: usize) -> RowAction {
-        let height = 68.0;
+        let height = 66.0;
         let gutter = GUTTER;
         let (rect, _) = ui.allocate_exact_size(
             Vec2::new(ui.available_width() - gutter * 2.0, height + 2.0),
@@ -1104,8 +1253,25 @@ impl App {
             .clicked();
 
         let painter = ui.painter().clone();
-        if hover {
+        let is_playing = self.playing_id.as_deref() == Some(item.id.as_str());
+
+        if is_playing {
+            icons::card(&painter, rect, RADIUS, ACCENT_SOFT, None);
+            // A bar at the leading edge: the row is active, not merely hovered.
+            painter.rect_filled(
+                Rect::from_min_max(
+                    Pos2::new(rect.left(), rect.top() + 10.0),
+                    Pos2::new(rect.left() + 3.0, rect.bottom() - 10.0),
+                ),
+                1.5,
+                ACCENT,
+            );
+        } else if hover {
             icons::card(&painter, rect, RADIUS, CARD, None);
+        }
+
+        if hover {
+            ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
         }
 
         let cover_rect = Rect::from_min_max(
@@ -1136,15 +1302,39 @@ impl App {
 
         let play_rect = Rect::from_center_size(
             Pos2::new(rect.right() - 26.0, rect.center().y),
-            Vec2::splat(34.0),
+            Vec2::splat(32.0),
         );
-        let play = icons::button_at(ui, play_rect, Icon::Play, Style::Outline);
+        let inflight = self.pending.as_deref() == Some(item.id.as_str());
+        let play = if inflight {
+            let fraction = self
+                .progress
+                .and_then(|(done, total)| total.filter(|t| *t > 0).map(|t| done as f32 / t as f32));
+            icons::progress_ring(ui, play_rect, fraction.unwrap_or(0.0));
+            ui.interact(play_rect, ui.scope_id().with(("row-progress", index)), Sense::hover())
+        } else if is_playing {
+            let response = icons::button_at(ui, play_rect, Icon::Pause, Style::Filled);
+            if response.clicked() {
+                if let Some(engine) = &self.engine {
+                    engine.pause();
+                }
+                self.playing_id = None;
+            }
+            response
+        } else {
+            icons::button_at(ui, play_rect, Icon::Play, Style::Outline)
+        };
+
+        // The whole row reads as busy, not just the button.
+        if inflight {
+            icons::card(ui.painter(), rect, RADIUS, ACCENT_SOFT, None);
+        }
 
         let download_rect = Rect::from_center_size(
-            Pos2::new(rect.right() - 70.0, rect.center().y),
-            Vec2::splat(28.0),
+            Pos2::new(rect.right() - 74.0, rect.center().y),
+            Vec2::splat(32.0),
         );
-        let download = icons::button_at(ui, download_rect, Icon::Download, Style::Ghost);
+        let download = icons::button_at(ui, download_rect, Icon::Download, Style::Ghost)
+            .on_hover_text("下载到本地");
 
         if play.clicked() {
             RowAction::Play
@@ -1161,7 +1351,7 @@ impl App {
         self.page_header(ui);
 
         if self.charts.songs.is_empty() {
-            empty_state(ui, Icon::Music, "暂无榜单数据", "稍后再来看看");
+            empty_state(ui, Icon::Music, "暂无榜单数据", "稍后再来看看", None);
             return;
         }
 
@@ -1247,6 +1437,8 @@ impl App {
             self.page = Page::Search;
             self.query = name.clone();
             self.last_query = name.clone();
+            self.results.clear();
+            self.searching = true;
             self.backend.send(Request::Search(name));
         }
     }
@@ -1264,13 +1456,21 @@ impl App {
             );
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.add_space(GUTTER);
+                let now = self.now();
+                let armed = self.clear_confirm.is_armed(now);
+                let label = if armed { "再点一次确认" } else { "清空缓存" };
                 if ui
                     .add(egui::Button::new(
-                        egui::RichText::new("清空缓存").size(T_META).color(DANGER),
+                        egui::RichText::new(label).size(T_META).color(DANGER),
                     ))
                     .clicked()
                 {
-                    self.backend.send(Request::ClearCache);
+                    if self.clear_confirm.click(now) {
+                        self.backend.send(Request::ClearCache);
+                    } else {
+                        self.toast
+                            .show("清空缓存会删除所有已下载曲目", true, now);
+                    }
                 }
                 if ui
                     .add(egui::Button::new(egui::RichText::new("刷新").size(T_META)))
@@ -1283,12 +1483,15 @@ impl App {
         ui.add_space(10.0);
 
         if self.library.is_empty() {
-            empty_state(
+            if empty_state(
                 ui,
                 Icon::Library,
                 "还没有缓存的曲目",
                 "在搜索页点「下载」或直接播放，曲目会留在本地",
-            );
+                Some(("去搜索", Icon::Search)),
+            ) {
+                self.set_page(Page::Search);
+            }
             return;
         }
 
@@ -1671,7 +1874,34 @@ fn choice_group(ui: &mut egui::Ui, rows: &[(&str, &str)], selected: Option<usize
 }
 
 /// A centred placeholder: an icon, a line of what happened, and what to do.
-fn empty_state(ui: &mut egui::Ui, icon: Icon, title: &str, hint: &str) {
+fn empty_state(
+    ui: &mut egui::Ui,
+    icon: Icon,
+    title: &str,
+    hint: &str,
+    action: Option<(&str, Icon)>,
+) -> bool {
+    empty_state_with(ui, icon, title, hint, action, false)
+}
+
+/// [`empty_state`], optionally with an activity arc so "正在搜索…" visibly moves.
+fn empty_state_with(
+    ui: &mut egui::Ui,
+    icon: Icon,
+    title: &str,
+    hint: &str,
+    action: Option<(&str, Icon)>,
+    spinning: bool,
+) -> bool {
+    if spinning {
+        spinner(
+            &ui.painter().clone(),
+            Pos2::new(ui.cursor().center().x, ui.cursor().top() + 90.0),
+            1.0,
+            TEXT_FAINT,
+            ui.input(|i| i.time),
+        );
+    }
     let height = ui.available_height().max(200.0);
     let (rect, _) =
         ui.allocate_exact_size(Vec2::new(ui.available_width(), height), Sense::hover());
@@ -1705,6 +1935,44 @@ fn empty_state(ui: &mut egui::Ui, icon: Icon, title: &str, hint: &str) {
         FontId::proportional(T_META),
         TEXT_FAINT,
     );
+
+    let Some((label, action_icon)) = action else {
+        return false;
+    };
+
+    let button = Rect::from_center_size(
+        Pos2::new(centre.x, centre.y + 108.0),
+        Vec2::new(150.0, 32.0),
+    );
+    let response = ui.interact(button, ui.scope_id().with("empty-cta"), Sense::click());
+    if response.hovered() {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+    }
+    icons::card(
+        &painter,
+        button,
+        RADIUS_SM,
+        if response.hovered() { CARD_HOVER } else { CARD },
+        None,
+    );
+    icons::paint(
+        &painter,
+        Rect::from_center_size(
+            Pos2::new(button.left() + 24.0, button.center().y),
+            Vec2::splat(15.0),
+        ),
+        action_icon,
+        TEXT_MUTED,
+    );
+    painter.text(
+        Pos2::new(button.left() + 40.0, button.center().y),
+        Align2::LEFT_CENTER,
+        label,
+        FontId::proportional(T_BODY),
+        TEXT,
+    );
+
+    response.clicked()
 }
 
 /// A titled group on a card surface.
@@ -1747,6 +2015,75 @@ impl eframe::App for App {
 }
 
 impl App {
+    /// Environment-driven debugging: an optional startup search, and an
+    /// optional capture of this window's own framebuffer.
+    ///
+    /// The capture goes through `Context::request_screenshot`, so it can only
+    /// ever contain this application — unlike a screen grab, which would take
+    /// whatever else happens to be on the display.
+    fn debug_hooks(&mut self, ctx: &egui::Context) {
+        let elapsed = self.started_at.elapsed();
+
+        if !self.demo_dispatched {
+            if let Some(query) = self.demo_query.clone() {
+                if elapsed > std::time::Duration::from_millis(300) {
+                    self.demo_dispatched = true;
+                    self.query = query.clone();
+                    self.last_query = query.clone();
+                    self.searching = true;
+                    self.backend.send(Request::Search(query));
+                }
+            } else {
+                self.demo_dispatched = true;
+            }
+        }
+
+        // Start a download once results exist, to capture the progress state.
+        if self.demo_play
+            && self.pending.is_none()
+            && self.now_playing.is_none()
+            && !self.results.is_empty()
+        {
+            let id = self.results[0].id.clone();
+            self.pending = Some(id.clone());
+            self.prepare(&id);
+        }
+
+        // Keep repainting while a capture is pending, otherwise the event loop
+        // sleeps and the shot never happens.
+        if self.snapshot_path.is_some() && !self.snapshot_taken {
+            ctx.request_repaint_after(std::time::Duration::from_millis(100));
+        }
+
+        let Some(path) = self.snapshot_path.clone() else {
+            return;
+        };
+        if self.snapshot_taken || elapsed < self.snapshot_after {
+            return;
+        }
+        self.snapshot_taken = true;
+
+        let closer = ctx.clone();
+        ctx.request_screenshot(move |image| {
+            let size = [image.size[0], image.size[1]];
+            let mut buffer = Vec::with_capacity(size[0] * size[1] * 4);
+            for pixel in &image.pixels {
+                buffer.extend_from_slice(&[pixel.r(), pixel.g(), pixel.b(), pixel.a()]);
+            }
+            match image::RgbaImage::from_raw(size[0] as u32, size[1] as u32, buffer) {
+                Some(img) => {
+                    if let Err(e) = img.save(&path) {
+                        tracing::error!("cannot save snapshot to {}: {e}", path.display());
+                    } else {
+                        tracing::info!("snapshot written to {}", path.display());
+                    }
+                }
+                None => tracing::error!("snapshot buffer had the wrong size"),
+            }
+            closer.send_viewport_cmd(egui::ViewportCommand::Close);
+        });
+    }
+
     /// Paint one frame. Split from [`eframe::App::ui`] so headless tests drive
     /// exactly the same code path.
     pub fn draw(&mut self, ui: &mut egui::Ui) {
@@ -1754,18 +2091,26 @@ impl App {
         self.drain_events();
         self.covers.poll(&ctx);
 
-        if self
+        let playing = self
             .engine
             .as_ref()
             .and_then(|e| e.snapshot().transport)
             .map(|t| t.phase() == Phase::Playing)
-            .unwrap_or(false)
-        {
+            .unwrap_or(false);
+
+        // Without this, a download shows a frozen spinner: egui only repaints on
+        // input, and a stalled-looking interface is indistinguishable from a
+        // click that did nothing. A toast also needs frames to expire on time.
+        if playing || self.busy.is_some() || self.toast.is_active() {
             ctx.request_repaint_after(Duration::from_millis(100));
         }
 
+        self.keyboard(&ctx);
+
         // `screen_rect` rather than the root ui rect: with a seamless titlebar the
         // root ui starts below the window edge, which would leave a bare strip.
+        self.debug_hooks(&ctx);
+
         paint_backdrop(ui.painter(), ctx.viewport_rect());
 
         self.header(ui);

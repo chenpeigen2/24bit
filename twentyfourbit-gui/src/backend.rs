@@ -118,7 +118,7 @@ pub async fn handle(
     client: &Client,
     cache: &Cache,
     request: Request,
-    emit: impl Fn(Event) + Send + 'static,
+    emit: impl Fn(Event) + Send + Sync + 'static,
 ) {
     match request {
         Request::Search(keyword) => {
@@ -139,7 +139,31 @@ pub async fn handle(
 
         Request::Prepare { id, quality } => {
             emit(Event::Busy("preparing track"));
-            match client.fetch_cached(&id, quality, cache).await {
+            emit(Event::Progress {
+                done: 0,
+                total: None,
+            });
+
+            // A 150MB master emits thousands of chunks; forwarding each one
+            // would flood the channel and make the UI redraw for no reason.
+            let mut last_emit =
+                std::time::Instant::now() - std::time::Duration::from_secs(1);
+
+            let result = client
+                .fetch_cached_with_progress(&id, quality, cache, |done, total| {
+                    let now = std::time::Instant::now();
+                    let finished = matches!(total, Some(t) if t > 0 && done >= t);
+                    if finished
+                        || now.duration_since(last_emit)
+                            >= std::time::Duration::from_millis(120)
+                    {
+                        last_emit = now;
+                        emit(Event::Progress { done, total });
+                    }
+                })
+                .await;
+
+            match result {
                 Ok((path, detail)) => emit(Event::Prepared { id, path, detail }),
                 Err(e) => emit(Event::Error(e.to_string())),
             }
@@ -151,7 +175,29 @@ pub async fn handle(
             destination,
         } => {
             emit(Event::Busy("exporting track"));
-            match client.fetch_cached(&id, quality, cache).await {
+            emit(Event::Progress {
+                done: 0,
+                total: None,
+            });
+
+            let mut last_emit =
+                std::time::Instant::now() - std::time::Duration::from_secs(1);
+
+            let fetched = client
+                .fetch_cached_with_progress(&id, quality, cache, |done, total| {
+                    let now = std::time::Instant::now();
+                    let finished = matches!(total, Some(t) if t > 0 && done >= t);
+                    if finished
+                        || now.duration_since(last_emit)
+                            >= std::time::Duration::from_millis(120)
+                    {
+                        last_emit = now;
+                        emit(Event::Progress { done, total });
+                    }
+                })
+                .await;
+
+            match fetched {
                 Ok((path, detail)) => {
                     let target = destination.join(detail.suggested_filename());
                     match export_file(&path, &target) {

@@ -392,6 +392,21 @@ impl Client {
         quality: Quality,
         cache: &crate::cache::Cache,
     ) -> Result<(std::path::PathBuf, TrackDetail)> {
+        self.fetch_cached_with_progress(id, quality, cache, |_, _| {})
+            .await
+    }
+
+    /// [`Client::fetch_cached`], reporting download progress.
+    ///
+    /// A master-tier file is ~150MB, so a caller with a UI needs bytes to show.
+    /// The callback fires as chunks arrive and once more at completion.
+    pub async fn fetch_cached_with_progress(
+        &self,
+        id: &str,
+        quality: Quality,
+        cache: &crate::cache::Cache,
+        mut on_progress: impl FnMut(u64, Option<u64>) + Send,
+    ) -> Result<(std::path::PathBuf, TrackDetail)> {
         let key = crate::cache::CacheKey::new(id, quality);
 
         if let Some(hit) = cache.lookup(&key) {
@@ -416,12 +431,18 @@ impl Client {
 
         let mut detail = self.track(id, quality).await?;
 
-        match self.download_to(&detail.download_url, &target).await {
+        let mut sink = |done: u64, total: Option<u64>| on_progress(done, total);
+
+        match self
+            .download_to_with_progress(&detail.download_url, &target, &mut sink)
+            .await
+        {
             Ok(_) => {}
             Err(err) if err.is_retryable_with_fresh_link() => {
                 tracing::info!(id, "signed URL expired; fetching a fresh one");
                 detail = self.track(id, quality).await?;
-                self.download_to(&detail.download_url, &target).await?;
+                self.download_to_with_progress(&detail.download_url, &target, &mut sink)
+                    .await?;
             }
             Err(err) => return Err(err),
         }

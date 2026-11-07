@@ -203,8 +203,21 @@ pub fn button(ui: &mut Ui, icon: Icon, diameter: f32, style: Style) -> Response 
 
 /// An icon button at an exact rectangle, for hand-painted rows.
 pub fn button_at(ui: &mut Ui, rect: Rect, icon: Icon, style: Style) -> Response {
-    let response = ui.interact(rect, ui.scope_id().with(("icon", icon as u8, rect.min.x as i32)), Sense::click());
-    let hovered = response.hovered();
+    // The id must be unique per button. Keying on the icon and x alone made
+    // every row's play button share an id — the same column, the same glyph —
+    // which silently corrupts interaction state between rows.
+    let response = ui.interact(
+        rect,
+        ui.scope_id()
+            .with((icon as u8, rect.min.x as i32, rect.min.y as i32)),
+        Sense::click(),
+    );
+    let pressed = response.is_pointer_button_down_on();
+    let hovered = response.hovered() || pressed;
+
+    if response.hovered() {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+    }
     let painter = ui.painter();
 
     let (bg, fg) = match style {
@@ -242,6 +255,13 @@ pub fn button_at(ui: &mut Ui, rect: Rect, icon: Icon, style: Style) -> Response 
         ),
     };
 
+    // A press must be visible: without it a slow action feels like a dead click.
+    let bg = if pressed {
+        Some(crate::theme::CARD_HOVER)
+    } else {
+        bg
+    };
+
     if let Some(bg) = bg {
         painter.circle_filled(rect.center(), rect.width().min(rect.height()) / 2.0, bg);
         if style == Style::Outline {
@@ -261,6 +281,42 @@ pub fn button_at(ui: &mut Ui, rect: Rect, icon: Icon, style: Style) -> Response 
     response
 }
 
+/// A determinate progress ring. `fraction` is `0.0..=1.0`; when the total size
+/// is unknown, pass 0 and the ring shows as a track only.
+pub fn progress_ring(ui: &mut Ui, rect: Rect, fraction: f32) {
+    let painter = ui.painter();
+    let centre = rect.center();
+    let radius = rect.width().min(rect.height()) / 2.0 - 2.0;
+
+    painter.circle_stroke(centre, radius, Stroke::new(2.0, crate::theme::BORDER_STRONG));
+
+    let sweep = std::f32::consts::TAU * fraction.clamp(0.0, 1.0);
+    if sweep > 0.01 {
+        let steps = ((sweep / std::f32::consts::TAU) * 64.0).ceil().max(2.0) as usize;
+        let points: Vec<Pos2> = (0..=steps)
+            .map(|i| {
+                let a = -std::f32::consts::FRAC_PI_2 + sweep * (i as f32 / steps as f32);
+                Pos2::new(centre.x + a.cos() * radius, centre.y + a.sin() * radius)
+            })
+            .collect();
+        painter.add(egui::Shape::line(
+            points,
+            Stroke::new(2.0, crate::theme::ACCENT),
+        ));
+    }
+
+    // Percentage in the middle, so the number is legible without hovering.
+    if fraction > 0.0 {
+        painter.text(
+            centre,
+            egui::Align2::CENTER_CENTER,
+            format!("{}", (fraction * 100.0).round() as u32),
+            egui::FontId::proportional(9.0),
+            crate::theme::TEXT_MUTED,
+        );
+    }
+}
+
 /// A thin rounded track with a filled portion and a draggable thumb.
 ///
 /// Returns the response together with a requested position when the user
@@ -275,9 +331,9 @@ pub fn seek_bar(ui: &mut Ui, value: f32, height: f32) -> (Response, Option<f32>)
         Pos2::new(rect.right(), rect.center().y + 2.0),
     );
     let base = if response.hovered() {
-        crate::theme::BORDER_STRONG
+        crate::theme::TEXT_FAINT
     } else {
-        crate::theme::BORDER
+        crate::theme::BORDER_STRONG
     };
     painter.rect_filled(track, 2.0, base);
 

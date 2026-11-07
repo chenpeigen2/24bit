@@ -33,6 +33,16 @@ objc2 = "0.6"
 objc2-app-kit = { version = "0.3", features = ["NSVisualEffectView", "NSWindow", "NSView", "NSColor", "NSResponder"] }
 objc2-foundation = "0.3"
 
+[features]
+# Headless frame rendering: used by the screenshot example and the one test
+# that inspects pixels. It needs a GPU, so it is opt-in — the default test run
+# must work on a build server with no adapter at all.
+render-check = ["egui_kittest/wgpu", "egui_kittest/snapshot"]
+
+[[example]]
+name = "render_pages"
+required-features = ["render-check"]
+
 [dev-dependencies]
 wiremock = "0.6"
-egui_kittest = { version = "0.37", features = ["snapshot", "wgpu"] }
+egui_kittest = { version = "0.37", default-features = false }

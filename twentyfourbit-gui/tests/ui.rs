@@ -128,6 +128,10 @@ fn the_app_survives_repeated_repaints() {
 
 /// A frame must render to an actual image, not just "not panic". This catches
 /// layout bugs that produce an empty or single-colour window.
+///
+/// Gated behind `render-check` because it needs a GPU adapter; the rest of the
+/// suite runs on a machine with none.
+#[cfg(feature = "render-check")]
 #[test]
 fn a_frame_renders_pixels() {
     let mut harness = harness();

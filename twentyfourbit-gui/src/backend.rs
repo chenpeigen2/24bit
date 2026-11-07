@@ -11,7 +11,7 @@ use std::path::PathBuf;
 use std::sync::mpsc::{Receiver, Sender};
 
 use twentyfourbit_core::cache::Cache;
-use twentyfourbit_core::{Client, Quality, SearchItem, WeeklyCharts};
+use twentyfourbit_core::{Client, Quality, SearchItem, TrackDetail, WeeklyCharts};
 
 /// Work the UI asks for.
 #[derive(Debug, Clone)]
@@ -26,6 +26,15 @@ pub enum Request {
         id: String,
         /// Which tier to fetch.
         quality: Quality,
+    },
+    /// Copy a cached track out to a user-visible directory.
+    Export {
+        /// Track id.
+        id: String,
+        /// Which tier to fetch.
+        quality: Quality,
+        /// Directory to copy into.
+        destination: PathBuf,
     },
     /// Re-scan the cache for the library view.
     Library,
@@ -68,10 +77,15 @@ pub enum Event {
         id: String,
         /// Local file.
         path: PathBuf,
-        /// Song title.
+        /// Everything the UI needs to label the track and show its lyrics.
+        detail: TrackDetail,
+    },
+    /// A track was copied out of the cache to `path`.
+    Exported {
+        /// Where it landed.
+        path: PathBuf,
+        /// Song title, for the confirmation message.
         title: String,
-        /// Artist.
-        artist: String,
     },
     /// Download progress for the current request.
     Progress {
@@ -122,12 +136,28 @@ pub async fn handle(
         Request::Prepare { id, quality } => {
             emit(Event::Busy("preparing track"));
             match client.fetch_cached(&id, quality, cache).await {
-                Ok((path, detail)) => emit(Event::Prepared {
-                    id,
-                    path,
-                    title: detail.name,
-                    artist: detail.player,
-                }),
+                Ok((path, detail)) => emit(Event::Prepared { id, path, detail }),
+                Err(e) => emit(Event::Error(e.to_string())),
+            }
+        }
+
+        Request::Export {
+            id,
+            quality,
+            destination,
+        } => {
+            emit(Event::Busy("exporting track"));
+            match client.fetch_cached(&id, quality, cache).await {
+                Ok((path, detail)) => {
+                    let target = destination.join(detail.suggested_filename());
+                    match export_file(&path, &target) {
+                        Ok(()) => emit(Event::Exported {
+                            path: target,
+                            title: detail.name,
+                        }),
+                        Err(e) => emit(Event::Error(e)),
+                    }
+                }
                 Err(e) => emit(Event::Error(e.to_string())),
             }
         }
@@ -152,6 +182,17 @@ pub async fn handle(
             Err(e) => emit(Event::Error(e.to_string())),
         },
     }
+}
+
+/// Copy a cached file to a user-visible location, creating the directory.
+///
+/// Copy rather than move: the cache still owns its entry and must keep working.
+fn export_file(from: &std::path::Path, to: &std::path::Path) -> Result<(), String> {
+    if let Some(parent) = to.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| format!("{}: {e}", parent.display()))?;
+    }
+    std::fs::copy(from, to).map_err(|e| format!("{}: {e}", to.display()))?;
+    Ok(())
 }
 
 /// Emit the cache contents as library rows, newest first.

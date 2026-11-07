@@ -9,4 +9,5 @@ pub mod backend;
 pub mod covers;
 pub mod fonts;
 pub mod format;
+pub mod lyrics;
 pub mod theme;

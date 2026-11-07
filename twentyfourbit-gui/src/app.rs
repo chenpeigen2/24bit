@@ -51,6 +51,9 @@ pub struct App {
     status: Option<(String, bool)>,
 
     now_playing: Option<TrackDetail>,
+    lyrics: crate::lyrics::Lyrics,
+    show_lyrics: bool,
+    export_dir: PathBuf,
     cjk_font: Option<String>,
     font_warning: Option<String>,
 
@@ -122,6 +125,9 @@ impl App {
             progress: None,
             status: None,
             now_playing: None,
+            lyrics: crate::lyrics::Lyrics::default(),
+            show_lyrics: true,
+            export_dir: default_export_dir(),
             cjk_font: cjk,
             font_warning,
             login_account: String::new(),
@@ -144,28 +150,18 @@ impl App {
                     self.charts = charts;
                     self.busy = None;
                 }
-                Event::Prepared { path, title, artist, .. } => {
+                Event::Prepared { path, detail, .. } => {
                     self.busy = None;
                     self.progress = None;
-                    self.status = Some((format!("Playing {title}"), false));
-                    if let Some(engine) = &self.engine {
-                        engine.play(path);
-                    } else {
-                        self.status = Some(("No audio device available".into(), true));
-                    }
-                    self.now_playing = Some(TrackDetail {
-                        id: String::new(),
-                        cover: String::new(),
-                        name: title,
-                        player: artist,
-                        album: String::new(),
-                        download_url: String::new(),
-                        size: String::new(),
-                        quality: String::new(),
-                        format: String::new(),
-                        lrc: None,
-                    });
-                    let _ = path;
+                    self.adopt_track(detail, path);
+                }
+                Event::Exported { path, title } => {
+                    self.busy = None;
+                    self.progress = None;
+                    self.status = Some((
+                        format!("已导出 {title} → {}", path.display()),
+                        false,
+                    ));
                 }
                 Event::Progress { done, total } => self.progress = Some((done, total)),
                 Event::Library(rows) => {
@@ -184,6 +180,44 @@ impl App {
                 }
             }
         }
+    }
+
+    /// Take ownership of a prepared track: parse its lyrics, start its cover
+    /// download, and hand the file to the audio engine.
+    ///
+    /// Public because it is the seam the backend's `Prepared` event lands on,
+    /// and the only way a headless test can put the app into a playing state.
+    pub fn adopt_track(&mut self, detail: TrackDetail, path: PathBuf) {
+        self.lyrics = detail
+            .lrc
+            .as_deref()
+            .map(crate::lyrics::Lyrics::parse)
+            .unwrap_or_default();
+        // Lyrics only make sense when there are some.
+        self.show_lyrics = !self.lyrics.is_empty();
+
+        self.covers.request(&detail.cover);
+        self.status = Some((format!("正在播放 {}", detail.name), false));
+
+        if let Some(engine) = &self.engine {
+            if path.exists() {
+                engine.play(path);
+            }
+        } else {
+            self.status = Some(("没有可用的音频设备".into(), true));
+        }
+
+        self.now_playing = Some(detail);
+    }
+
+    /// Lyrics currently loaded, for tests and for the lyrics panel.
+    pub fn lyrics(&self) -> &crate::lyrics::Lyrics {
+        &self.lyrics
+    }
+
+    /// Title of the track currently loaded, if any.
+    pub fn now_playing_title(&self) -> Option<&str> {
+        self.now_playing.as_ref().map(|d| d.name.as_str())
     }
 
     fn prepare(&self, id: &str) {
@@ -262,6 +296,99 @@ impl App {
             });
     }
 
+    /// Draw a cover at `size`, falling back to a placeholder while it loads.
+    fn show_cover(&mut self, url: &str, ui: &mut egui::Ui) -> Option<()> {
+        if url.is_empty() {
+            let (rect, _) = ui.allocate_exact_size(egui::vec2(56.0, 56.0), egui::Sense::hover());
+            ui.painter().rect_filled(rect, 8.0, theme::SURFACE_HOVER);
+            return None;
+        }
+        self.covers.request(url);
+        match self.covers.get(url) {
+            Some(CoverState::Ready(texture)) => {
+                ui.add(
+                    egui::Image::new(texture)
+                        .fit_to_exact_size(egui::vec2(56.0, 56.0))
+                        .corner_radius(8.0),
+                );
+                Some(())
+            }
+            _ => {
+                let (rect, _) = ui.allocate_exact_size(egui::vec2(56.0, 56.0), egui::Sense::hover());
+                ui.painter().rect_filled(rect, 8.0, theme::SURFACE_HOVER);
+                None
+            }
+        }
+    }
+
+    /// Right-hand lyrics panel: highlights the line being sung and lets a click
+    /// jump to it.
+    fn lyrics_panel(&mut self, ui: &mut egui::Ui) {
+        if !self.show_lyrics || self.lyrics.is_empty() {
+            return;
+        }
+
+        let position = self
+            .engine
+            .as_ref()
+            .and_then(|e| e.snapshot().transport)
+            .map(|t| t.position())
+            .unwrap_or_default();
+        let current = self.lyrics.index_at(position);
+
+        egui::Panel::right("lyrics")
+            .exact_size(300.0)
+            .resizable(true)
+            .frame(
+                egui::Frame::NONE
+                    .fill(theme::SURFACE)
+                    .inner_margin(egui::Margin::same(16)),
+            )
+            .show(ui, |ui| {
+                ui.label(
+                    egui::RichText::new("歌词")
+                        .size(14.0)
+                        .strong()
+                        .color(theme::TEXT_DIM),
+                );
+                ui.add_space(8.0);
+
+                let mut seek_to: Option<Duration> = None;
+
+                egui::ScrollArea::vertical()
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| {
+                        for (i, line) in self.lyrics.lines.iter().enumerate() {
+                            let is_current = Some(i) == current;
+                            let colour = if is_current { theme::ACCENT } else { theme::TEXT_DIM };
+                            let size = if is_current { 16.0 } else { 14.0 };
+
+                            let response = ui.add(
+                                egui::Label::new(
+                                    egui::RichText::new(&line.text).size(size).color(colour),
+                                )
+                                .sense(egui::Sense::click()),
+                            );
+
+                            if is_current {
+                                // Keep the sung line centred as playback moves.
+                                response.scroll_to_me(Some(egui::Align::Center));
+                            }
+                            if response.clicked() {
+                                seek_to = Some(line.at);
+                            }
+                            ui.add_space(6.0);
+                        }
+                    });
+
+                if let Some(target) = seek_to {
+                    if let Some(engine) = &self.engine {
+                        engine.seek(target);
+                    }
+                }
+            });
+    }
+
     fn transport(&mut self, ui: &mut egui::Ui) {
         let snapshot = self.engine.as_ref().map(|e| e.snapshot());
 
@@ -284,6 +411,28 @@ impl App {
                 };
 
                 let Some(transport) = &snapshot.transport else {
+                    // A track may be loaded but unable to play (no device, or a
+                    // file that failed to open). Showing the title anyway beats
+                    // dropping straight back to an empty prompt.
+                    if let Some(detail) = self.now_playing.clone() {
+                        ui.horizontal(|ui| {
+                            if self.show_cover(&detail.cover, ui).is_none() {
+                                // placeholder is drawn inside show_cover
+                            }
+                            ui.vertical(|ui| {
+                                ui.label(egui::RichText::new(&detail.name).size(16.0).strong());
+                                ui.label(
+                                    egui::RichText::new(format!(
+                                        "{} · {}",
+                                        detail.player, detail.quality
+                                    ))
+                                    .size(12.0)
+                                    .color(theme::TEXT_DIM),
+                                );
+                            });
+                        });
+                        return;
+                    }
                     ui.centered_and_justified(|ui| {
                         ui.label(
                             egui::RichText::new("选一首歌开始播放")
@@ -297,6 +446,11 @@ impl App {
                 let playing = transport.phase() == Phase::Playing;
 
                 ui.horizontal(|ui| {
+                    // Cover art for the track that is playing.
+                    if let Some(cover) = self.now_playing.as_ref().map(|d| d.cover.clone()) {
+                        self.show_cover(&cover, ui);
+                    }
+
                     // Title block.
                     ui.vertical(|ui| {
                         let title = self
@@ -363,6 +517,14 @@ impl App {
                             .size(11.0)
                             .color(theme::TEXT_DIM),
                         );
+
+                        if !self.lyrics.is_empty()
+                            && ui
+                                .selectable_label(self.show_lyrics, "歌词")
+                                .clicked()
+                        {
+                            self.show_lyrics = !self.show_lyrics;
+                        }
                     });
                 });
 
@@ -481,6 +643,7 @@ impl App {
         ui.add_space(4.0);
 
         let mut to_prepare: Option<String> = None;
+        let mut to_export: Option<String> = None;
 
         egui::ScrollArea::vertical().show(ui, |ui| {
             for item in &self.results {
@@ -517,6 +680,9 @@ impl App {
                         if ui.button("播放").clicked() {
                             to_prepare = Some(item.id.clone());
                         }
+                        if ui.button("下载").on_hover_text(self.export_dir.display().to_string()).clicked() {
+                            to_export = Some(item.id.clone());
+                        }
                     });
                 });
 
@@ -534,6 +700,12 @@ impl App {
 
         if let Some(id) = to_prepare {
             self.prepare(&id);
+        } else if let Some(id) = to_export {
+            self.backend.send(Request::Export {
+                id,
+                quality: self.quality,
+                destination: self.export_dir.clone(),
+            });
         }
     }
 
@@ -693,6 +865,14 @@ impl App {
         }
 
         ui.add_space(14.0);
+        ui.label(egui::RichText::new("下载目录").size(16.0).strong());
+        ui.label(
+            egui::RichText::new(self.export_dir.display().to_string())
+                .size(11.0)
+                .color(theme::TEXT_DIM),
+        );
+
+        ui.add_space(14.0);
         ui.label(egui::RichText::new("账号").size(16.0).strong());
         ui.label(
             egui::RichText::new(match &self.account {
@@ -773,6 +953,7 @@ impl App {
         self.sidebar(ui);
         self.status_bar(ui);
         self.transport(ui);
+        self.lyrics_panel(ui);
 
         egui::CentralPanel::default()
             .frame(
@@ -817,4 +998,12 @@ impl eframe::App for App {
             engine.shutdown();
         }
     }
+}
+
+/// Where "download to disk" puts files by default.
+fn default_export_dir() -> PathBuf {
+    dirs::audio_dir()
+        .or_else(dirs::home_dir)
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join("24bit")
 }

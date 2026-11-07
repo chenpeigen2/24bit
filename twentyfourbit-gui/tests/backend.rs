@@ -152,7 +152,7 @@ async fn prepare_downloads_into_the_cache_and_reports_the_path() {
     let prepared = events
         .iter()
         .find_map(|e| match e {
-            Event::Prepared { path, title, .. } => Some((path.clone(), title.clone())),
+            Event::Prepared { path, detail, .. } => Some((path.clone(), detail.name.clone())),
             _ => None,
         })
         .expect("a Prepared event should have been emitted");
@@ -359,4 +359,129 @@ async fn progress_precedes_completion() {
         assert!(p < prepared_at, "progress must arrive before completion");
     }
     tokio::time::sleep(Duration::from_millis(1)).await;
+}
+
+// ---------------------------------------------------------------- exporting
+
+async fn track_server() -> (wiremock::MockServer, Client) {
+    let server = wiremock::MockServer::start().await;
+    let detail = serde_json::json!({
+        "status": true,
+        "result": {
+            "id": "a1", "cover": "c", "name": "富士山下", "player": "陈奕迅",
+            "album": "What's Going On…?", "url": format!("{}/obj.flac", server.uri()),
+            "size": "2.0KB", "quality": "至臻母带", "format": "flac", "lrc": null
+        }
+    })
+    .to_string();
+
+    wiremock::Mock::given(wiremock::matchers::method("POST"))
+        .and(wiremock::matchers::path("/api/music/findMusicPage"))
+        .respond_with(wiremock::ResponseTemplate::new(200).set_body_string(detail))
+        .mount(&server)
+        .await;
+    wiremock::Mock::given(wiremock::matchers::method("GET"))
+        .and(wiremock::matchers::path("/obj.flac"))
+        .respond_with(
+            wiremock::ResponseTemplate::new(200)
+                .insert_header("content-length", "1024")
+                .set_body_bytes(vec![9u8; 1024]),
+        )
+        .mount(&server)
+        .await;
+
+    let client = Client::builder().base_url(server.uri()).build().unwrap();
+    (server, client)
+}
+
+/// Exporting copies the track out under a human-readable filename.
+#[tokio::test]
+async fn export_writes_a_named_file_to_the_destination() {
+    let (_server, client) = track_server().await;
+    let cache = Cache::new(scratch("export-cache"), u64::MAX);
+    let dest = scratch("export-dest");
+    let events = Arc::new(Mutex::new(Vec::new()));
+
+    handle(
+        &client,
+        &cache,
+        Request::Export {
+            id: "a1".into(),
+            quality: Quality::Master,
+            destination: dest.clone(),
+        },
+        collect(events.clone()),
+    )
+    .await;
+
+    let events = events.lock().unwrap();
+    let path = events
+        .iter()
+        .find_map(|e| match e {
+            Event::Exported { path, title } => {
+                assert_eq!(title, "富士山下");
+                Some(path.clone())
+            }
+            _ => None,
+        })
+        .expect("an Exported event should have been emitted");
+
+    assert!(path.exists(), "the exported file must exist");
+    assert_eq!(std::fs::read(&path).unwrap().len(), 1024);
+    // Readable, not a track id — and illegal characters are replaced, because
+    // this album title genuinely contains '?'.
+    assert_eq!(
+        path.file_name().unwrap().to_string_lossy(),
+        "富士山下 - 陈奕迅 [What's Going On…_].flac",
+        "the filename should be readable, not a track id"
+    );
+}
+
+/// Exporting must not consume the cache entry: it is a copy, not a move.
+#[tokio::test]
+async fn export_leaves_the_cache_entry_intact() {
+    let (_server, client) = track_server().await;
+    let cache = Cache::new(scratch("export-keep"), u64::MAX);
+    let dest = scratch("export-keep-dest");
+
+    let events = Arc::new(Mutex::new(Vec::new()));
+    handle(
+        &client,
+        &cache,
+        Request::Export {
+            id: "a1".into(),
+            quality: Quality::Master,
+            destination: dest,
+        },
+        collect(events.clone()),
+    )
+    .await;
+
+    assert!(
+        cache.lookup(&CacheKey::new("a1", Quality::Master)).is_some(),
+        "the cache must still hold the track after exporting"
+    );
+}
+
+/// A destination that does not exist yet is created rather than failing.
+#[tokio::test]
+async fn export_creates_missing_directories() {
+    let (_server, client) = track_server().await;
+    let cache = Cache::new(scratch("export-nested"), u64::MAX);
+    let dest = scratch("export-nested-dest").join("a").join("b");
+
+    let events = Arc::new(Mutex::new(Vec::new()));
+    handle(
+        &client,
+        &cache,
+        Request::Export {
+            id: "a1".into(),
+            quality: Quality::Master,
+            destination: dest.clone(),
+        },
+        collect(events.clone()),
+    )
+    .await;
+
+    assert!(dest.exists(), "nested destination directories must be created");
 }

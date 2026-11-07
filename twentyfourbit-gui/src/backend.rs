@@ -54,8 +54,12 @@ pub enum Request {
 /// One row of the library view.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LibraryRow {
-    /// Filename, used as the display title.
+    /// Filename on disk.
     pub name: String,
+    /// Song title, from the cache sidecar when available.
+    pub title: String,
+    /// Artist and quality, for the second line.
+    pub subtitle: String,
     /// Local path.
     pub path: PathBuf,
     /// Size in bytes.
@@ -236,11 +240,35 @@ fn collect_files(dir: &std::path::Path, out: &mut Vec<LibraryRow>) {
         if ext == "part" || ext == "json" {
             continue;
         }
+        let name = path
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
+
+        // The sidecar written at download time carries the real title. Reading
+        // it means the library shows "富士山下" rather than a hashed filename.
+        let detail: Option<twentyfourbit_core::TrackDetail> = std::fs::read_to_string(
+            path.with_extension("json"),
+        )
+        .ok()
+        .and_then(|text| serde_json::from_str(&text).ok());
+
+        let (title, subtitle) = match detail {
+            Some(d) => {
+                let subtitle = if d.quality.is_empty() {
+                    d.player
+                } else {
+                    format!("{} · {}", d.player, d.quality)
+                };
+                (d.name, subtitle)
+            }
+            None => (name.trim_end_matches(".flac").to_owned(), String::new()),
+        };
+
         out.push(LibraryRow {
-            name: path
-                .file_name()
-                .map(|n| n.to_string_lossy().into_owned())
-                .unwrap_or_default(),
+            name,
+            title,
+            subtitle,
             path,
             bytes: meta.len(),
         });

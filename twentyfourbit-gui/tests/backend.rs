@@ -280,6 +280,11 @@ async fn library_lists_cached_tracks() {
     assert_eq!(rows.len(), 2);
     let total: u64 = rows.iter().map(|r| r.bytes).sum();
     assert_eq!(total, 350);
+    // Without a sidecar the row falls back to the filename stem.
+    assert!(
+        rows.iter().all(|r| !r.title.is_empty()),
+        "every row needs something to display"
+    );
 }
 
 /// Clearing the cache empties it and reports the new size.

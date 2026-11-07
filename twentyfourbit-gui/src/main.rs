@@ -14,7 +14,12 @@ fn main() -> eframe::Result<()> {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([1080.0, 720.0])
             .with_min_inner_size([820.0, 520.0])
-            .with_title("24bit — Hi-Res 无损音乐"),
+            .with_title("24bit — Hi-Res 无损音乐")
+            // Seamless dark chrome: content flows behind a transparent titlebar,
+            // and the app draws its own header around the traffic lights.
+            .with_fullsize_content_view(true)
+            .with_title_shown(false)
+            .with_titlebar_buttons_shown(true),
         // Remember window size and position between launches.
         persist_window: true,
         ..Default::default()

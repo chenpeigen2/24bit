@@ -72,3 +72,38 @@ fn an_empty_database_reports_none() {
     let db = fontdb::Database::new();
     assert!(find_in(&db).is_none());
 }
+
+/// Latin text carries most of the interface. On macOS this must resolve to SF
+/// Pro, which is the difference between "native app" and "toolkit demo".
+#[test]
+fn the_ui_font_prefers_the_system_face() {
+    let font = twentyfourbit_gui::fonts::find_ui_font();
+    match font {
+        Some(font) => {
+            let name = font.family.to_lowercase();
+            let known = [
+                "system font",
+                "sf pro",
+                "sf ns",
+                ".sf ns",
+                "sf compact",
+                "helvetica",
+                "segoe",
+                "cantarell",
+                "ubuntu",
+                "dejavu",
+            ];
+            assert!(
+                known.iter().any(|k| name.contains(k)),
+                "picked {name:?}, which is not a system UI face"
+            );
+            let bytes = twentyfourbit_gui::fonts::load_bytes(&font).expect("bytes");
+            assert!(bytes.len() > 10_000);
+        }
+        None => {
+            // Acceptable on a machine with no usable font at all, but say so
+            // loudly instead of passing silently.
+            eprintln!("no system UI font found; egui's built-in face will be used");
+        }
+    }
+}

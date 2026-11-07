@@ -10,5 +10,6 @@ pub mod covers;
 pub mod debounce;
 pub mod fonts;
 pub mod format;
+pub mod icons;
 pub mod lyrics;
 pub mod theme;

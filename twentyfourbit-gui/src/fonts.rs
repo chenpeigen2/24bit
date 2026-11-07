@@ -53,6 +53,62 @@ const PREFERRED_FAMILIES: &[&str] = &[
     "arial unicode ms",
 ];
 
+/// Family names for the system UI face, best first.
+///
+/// On macOS this resolves to SF Pro, which is what makes the window look like a
+/// native app rather than like a toolkit demo. Latin text carries most of the
+/// interface, so getting this right matters more than any colour choice.
+const PREFERRED_UI_FAMILIES: &[&str] = &[
+    // macOS reports SFNS.ttf under this alias.
+    "system font",
+    "sf pro text",
+    "sf pro display",
+    "sf pro",
+    "sf ns",
+    ".sf ns",
+    "sf compact",
+    "helvetica neue",
+    "segoe ui variable",
+    "segoe ui",
+    "cantarell",
+    "ubuntu",
+    "dejavu sans",
+];
+
+/// Find a Latin UI font on this machine.
+///
+/// Returns `None` when nothing suitable exists, in which case egui's built-in
+/// face is used and the app still works.
+pub fn find_ui_font() -> Option<CjkFont> {
+    let mut db = fontdb::Database::new();
+    db.load_system_fonts();
+    find_ui_in(&db)
+}
+
+/// The lookup half of [`find_ui_font`], for testing.
+pub fn find_ui_in(db: &fontdb::Database) -> Option<CjkFont> {
+    let faces: Vec<fontdb::FaceInfo> = db.faces().cloned().collect();
+
+    for wanted in PREFERRED_UI_FAMILIES {
+        let found = faces.iter().find(|face| {
+            face.families
+                .iter()
+                .any(|(name, _)| name.to_lowercase() == *wanted)
+        });
+        if let Some(face) = found {
+            let family = face
+                .families
+                .first()
+                .map(|(n, _)| n.clone())
+                .unwrap_or_else(|| (*wanted).to_owned());
+            if let Some(font) = to_font(face, family) {
+                return Some(font);
+            }
+        }
+    }
+    None
+}
+
 /// Find a CJK font on this machine.
 ///
 /// Returns `None` when no Chinese-capable face is installed, which the caller

@@ -58,7 +58,9 @@ pub fn install(raw: raw_window_handle::RawWindowHandle) -> bool {
 
         effect.setMaterial(NSVisualEffectMaterial::UnderWindowBackground);
         effect.setBlendingMode(NSVisualEffectBlendingMode::BehindWindow);
-        effect.setState(NSVisualEffectState::Active);
+        // Follow the window's active state, like every native macOS surface:
+        // the blur dims when the app loses focus.
+        effect.setState(NSVisualEffectState::FollowsWindowActiveState);
         effect.setAutoresizingMask(
             NSAutoresizingMaskOptions::ViewWidthSizable
                 | NSAutoresizingMaskOptions::ViewHeightSizable,

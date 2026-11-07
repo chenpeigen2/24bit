@@ -130,3 +130,41 @@ fn the_level_is_clamped() {
     volume.set(-2.0);
     assert_eq!(volume.visible(), 0.0);
 }
+
+// ------------------------------------------------------------------- glass
+
+/// Surfaces must stay opaque when there is no blurred backdrop behind them.
+#[test]
+fn surfaces_are_opaque_without_a_backdrop() {
+    twentyfourbit_gui::theme::set_glass(false);
+    for colour in [
+        twentyfourbit_gui::theme::bg(),
+        twentyfourbit_gui::theme::panel(),
+        twentyfourbit_gui::theme::card(),
+        twentyfourbit_gui::theme::card_hover(),
+    ] {
+        assert_eq!(colour.a(), 255, "an opaque window must not be see-through");
+    }
+}
+
+/// With vibrancy on, chrome is more translucent than the content plane, which
+/// stays readable.
+#[test]
+fn glass_makes_chrome_translucent_but_keeps_content_readable() {
+    twentyfourbit_gui::theme::set_glass(true);
+
+    let panel = twentyfourbit_gui::theme::panel().a();
+    let content = twentyfourbit_gui::theme::bg().a();
+
+    assert!(panel < 160, "chrome should read as glass, got alpha {panel}");
+    assert!(
+        content >= 190,
+        "body text sits on the content plane and needs a real scrim, got alpha {content}"
+    );
+    assert!(
+        panel < content,
+        "chrome must be more translucent than content for the layering to read"
+    );
+
+    twentyfourbit_gui::theme::set_glass(false);
+}

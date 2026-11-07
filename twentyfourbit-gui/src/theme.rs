@@ -111,7 +111,9 @@ pub fn glass() -> bool {
 /// The content plane.
 pub fn bg() -> Color32 {
     if glass() {
-        Color32::from_rgba_unmultiplied(255, 255, 255, 216)
+        // 80% white: enough blur shows through to read as glass, and worst-case
+        // contrast for near-black body text stays around 8:1.
+        Color32::from_rgba_unmultiplied(255, 255, 255, 204)
     } else {
         BG
     }
@@ -120,7 +122,8 @@ pub fn bg() -> Color32 {
 /// Chrome: sidebar, header, transport.
 pub fn panel() -> Color32 {
     if glass() {
-        Color32::from_rgba_unmultiplied(255, 255, 255, 150)
+        // Chrome is the part that is supposed to look like frosted glass.
+        Color32::from_rgba_unmultiplied(255, 255, 255, 118)
     } else {
         PANEL
     }
@@ -129,7 +132,7 @@ pub fn panel() -> Color32 {
 /// Inputs, rows and grouped containers.
 pub fn card() -> Color32 {
     if glass() {
-        Color32::from_rgba_unmultiplied(255, 255, 255, 150)
+        Color32::from_rgba_unmultiplied(255, 255, 255, 142)
     } else {
         CARD
     }
@@ -138,7 +141,7 @@ pub fn card() -> Color32 {
 /// Cards under the pointer.
 pub fn card_hover() -> Color32 {
     if glass() {
-        Color32::from_rgba_unmultiplied(255, 255, 255, 205)
+        Color32::from_rgba_unmultiplied(255, 255, 255, 196)
     } else {
         CARD_HOVER
     }
